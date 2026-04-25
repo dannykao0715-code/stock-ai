@@ -3,71 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 股市籌碼監測站</title>
+    <title>AI 籌碼監測站</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
-        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 15px; }
-        .table-dark { --bs-table-bg: #1e293b; }
-        .text-advice { color: #38bdf8; font-weight: bold; }
-        .profit-plus { color: #fb7185; } /* 漲用紅 */
-        .profit-minus { color: #34d399; } /* 跌用綠 */
+        body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft JhengHei", sans-serif; }
+        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; margin-bottom: 1rem; }
+        .index-val { font-size: 1.5rem; font-weight: bold; color: #ef4444; }
+        .stock-card { padding: 15px; border-left: 4px solid #38bdf8; }
+        .badge-retail { background-color: #0ea5e9; color: white; font-size: 0.75rem; }
+        .profit-plus { color: #f87171; }
+        .profit-minus { color: #4ade80; }
+        @media (max-width: 576px) { .d-mobile-none { display: none; } }
     </style>
 </head>
 <body>
-<div class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="fw-bold">📊 AI 籌碼慣性監測站 <small class="fs-6 text-secondary">主委實戰版</small></h2>
-        <div class="text-end text-muted small">更新時間：{{ now }}</div>
-    </div>
+<div class="container py-3">
+    <header class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h4 mb-0 fw-bold text-info">📊 AI 籌碼監測站</h1>
+        <small class="text-muted">{{ now }}</small>
+    </header>
 
-    <div class="card p-3 mb-4 text-center">
-        <div class="row">
-            <div class="col">
-                <span class="text-secondary">台股加權指數</span><br>
-                <span class="h2 fw-bold text-danger">{{ tw_idx }}</span>
+    <div class="row g-2 mb-3">
+        <div class="col-6">
+            <div class="card p-3 text-center">
+                <div class="small text-secondary">加權指數</div>
+                <div class="index-val">{{ indices.twii }}</div>
+            </div>
+        </div>
+        <div class="col-6">
+            <div class="card p-3 text-center">
+                <div class="small text-secondary">櫃買指數</div>
+                <div class="index-val">{{ indices.otc }}</div>
             </div>
         </div>
     </div>
 
-    <div class="card mb-4">
-        <div class="card-header bg-transparent border-bottom border-secondary py-3">
-            <h5 class="mb-0">🚀 AI 慣性重演個股推薦</h5>
-        </div>
-        <div class="table-responsive p-3">
-            <table class="table table-dark table-hover mb-0">
-                <thead>
-                    <tr class="text-secondary">
-                        <th>個股</th><th>歷史相似度</th><th>散戶動態</th><th>AI 建議</th><th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for rec in recs %}
-                    <tr>
-                        <td><strong>{{ rec.name }}</strong> <small class="text-muted">{{ rec.symbol }}</small></td>
-                        <td class="text-warning">{{ rec.score }}%</td>
-                        <td><span class="badge bg-info text-dark">{{ rec.retail }}</span></td>
-                        <td class="text-advice">{{ rec.advice }}</td>
-                        <td>
-                            <a href="/add/{{ rec.symbol }}/{{ rec.name }}" class="btn btn-sm btn-outline-danger">＋ 追蹤</a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <h5 class="mb-3">🚀 AI 慣性+籌碼推薦</h5>
+    {% for rec in recs %}
+    <div class="card stock-card">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h6 class="mb-1 fw-bold">{{ rec.name }} <span class="text-secondary small">{{ rec.symbol }}</span></h6>
+                <div class="mb-2">
+                    <span class="badge badge-retail">{{ rec.retail }}</span>
+                    <span class="ms-2 text-warning small">相似度: {{ rec.score }}%</span>
+                </div>
+                <div class="text-advice small">{{ rec.advice }}</div>
+            </div>
+            <a href="/add/{{ rec.symbol }}/{{ rec.name }}" class="btn btn-sm btn-danger px-3">追蹤</a>
         </div>
     </div>
+    {% endfor %}
 
-    <div class="card">
-        <div class="card-header bg-transparent border-bottom border-secondary d-flex justify-content-between align-items-center py-3">
-            <h5 class="mb-0">💰 模擬實戰損益追蹤</h5>
-            <a href="/clear" class="btn btn-sm btn-outline-secondary">清空追蹤</a>
+    <div class="card mt-4">
+        <div class="card-header bg-transparent border-bottom border-secondary d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">💰 損益追蹤</h6>
+            <a href="/clear" class="btn btn-sm btn-outline-secondary py-0">清空</a>
         </div>
-        <div class="table-responsive p-3">
-            <table class="table table-dark mb-0">
+        <div class="table-responsive p-2">
+            <table class="table table-dark table-sm mb-0 small">
                 <thead>
                     <tr class="text-secondary">
-                        <th>名稱</th><th>買入價格</th><th>目前市價</th><th>累計損益</th><th>加入日期</th>
+                        <th>名稱</th><th>買入</th><th>現價</th><th>損益</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -79,10 +76,9 @@
                         <td class="{{ 'profit-plus' if item.profit > 0 else 'profit-minus' }}">
                             {{ '+' if item.profit > 0 }}{{ item.profit }}%
                         </td>
-                        <td class="text-muted">{{ item.date }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="5" class="text-center text-muted py-4">目前尚無追蹤標的。</td></tr>
+                    <tr><td colspan="4" class="text-center text-muted py-3">尚無追蹤標的</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
