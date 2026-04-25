@@ -1,40 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 股市全市場決策系統 v19.0</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0d1117; color: #c9d1d9; font-family: 'Microsoft JhengHei', sans-serif; }
+        .card-main { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .index-val { font-size: 2rem; font-weight: bold; color: #ffffff; }
+        .btn-scan { background: #238636; color: white; padding: 15px; font-size: 1.25rem; border-radius: 10px; text-decoration: none; display: block; text-align: center; }
+        .btn-scan:hover { background: #2ea043; color: white; }
+        .pnl-up { color: #f85149; } .pnl-down { color: #3fb950; }
+    </style>
+</head>
+<body>
 <div class="container py-4">
-    <div class="dashboard-card mb-4 shadow-lg">
-        <div class="d-flex justify-content-between align-items-center">
-            <h4 class="text-info fw-bold">台股全市場自動化決策系統</h4>
-            <span class="badge bg-dark border border-secondary">{{ market.time }}</span>
+    <div class="card-main shadow">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="text-info m-0">📊 全市場決策儀表板</h4>
+            <span class="text-secondary small">系統更新時間：{{ market.time }}</span>
         </div>
-        <hr class="border-secondary">
         <div class="row text-center">
-            <div class="col-6">
-                <div class="small text-secondary">加權指數</div>
-                <div class="h2 fw-bold text-white">{{ market.twii }}</div>
+            <div class="col-6 border-end border-secondary">
+                <div class="small text-secondary">台股加權指數</div>
+                <div class="index-val">{{ market.twii }}</div>
             </div>
             <div class="col-6">
-                <div class="small text-secondary">櫃買指數</div>
-                <div class="h2 fw-bold text-white">{{ market.otc }}</div>
+                <div class="small text-secondary">櫃買指數 (OTC)</div>
+                <div class="index-val">{{ market.otc }}</div>
             </div>
         </div>
     </div>
 
-    <div class="text-center mb-4">
-        <a href="/?scan=true" class="btn btn-lg btn-success w-100 py-3 shadow">
-            🔥 開始全市場 (1,800+) 地毯式自動選股
-        </a>
-    </div>
+    <a href="/?scan=true" class="btn-scan shadow mb-4">🚀 開始 AI 全市場地毯式選股 (1,800+ 標的掃描)</a>
 
     {% if recs %}
-    <div class="dashboard-card mb-4 border-success">
-        <h5 class="text-success mb-3">🎯 AI 強勢推薦標的 (海選結果)</h5>
+    <div class="card-main">
+        <h5 class="text-warning mb-3">🔍 AI 強勢海選結果</h5>
         <div class="row">
             {% for r in recs %}
-            <div class="col-md-3 mb-2">
-                <div class="p-3 bg-dark border border-secondary rounded shadow-sm text-center">
-                    <div class="fw-bold">{{ r.name }}</div>
-                    <div class="small text-muted">{{ r.symbol }}</div>
-                    <div class="h4 text-danger my-1">${{ r.price }}</div>
-                    <div class="small text-warning">昨日強度: +{{ r.change }}%</div>
-                    <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-sm btn-outline-danger mt-2 w-100">追蹤模擬交易</a>
+            <div class="col-md-4 mb-3">
+                <div class="p-3 border border-secondary rounded bg-dark">
+                    <div class="d-flex justify-content-between">
+                        <span class="fw-bold">{{ r.name }}</span>
+                        <span class="text-secondary small">{{ r.symbol }}</span>
+                    </div>
+                    <div class="h3 my-2">${{ r.price }}</div>
+                    <div class="text-danger small mb-2">強度評分: +{{ r.change }}%</div>
+                    <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-sm btn-outline-danger w-100">追蹤模擬交易</a>
                 </div>
             </div>
             {% endfor %}
@@ -42,29 +55,33 @@
     </div>
     {% endif %}
 
-    <div class="dashboard-card shadow">
+    <div class="card-main">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="text-danger">📊 模擬交易追蹤清單</h5>
-            <div class="h5 mb-0">累計總損益: <span class="{% if total_pnl >= 0 %}text-danger{% else %}text-success{% endif %} fw-bold">{{ total_pnl }}%</span></div>
+            <h5 class="text-danger m-0">📉 模擬交易追蹤清單</h5>
+            <div class="h5 m-0">當前總損益: <span class="{% if total_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">{{ total_pnl }}%</span></div>
         </div>
-        <table class="table table-dark table-hover">
-            <thead>
-                <tr>
-                    <th>標的</th><th>買入日期</th><th>買入價格</th><th>目前價格</th><th>單筆損益</th><th>操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for t in trades %}
-                <tr>
-                    <td>{{ t.name }} ({{ t.symbol }})</td>
-                    <td>{{ t.date }}</td>
-                    <td>{{ t.buy_price }}</td>
-                    <td>{{ t.curr_p }}</td>
-                    <td class="fw-bold {% if t.pnl >= 0 %}text-danger{% else %}text-success{% endif %}">{{ t.pnl }}%</td>
-                    <td><a href="/untrack/{{ t.symbol }}" class="btn btn-sm btn-outline-secondary">解除</a></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle">
+                <thead class="text-secondary">
+                    <tr>
+                        <th>標的</th><th>買入日期</th><th>成本價</th><th>目前價</th><th>損益</th><th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in trades %}
+                    <tr>
+                        <td class="fw-bold">{{ t.name }} <small class="text-muted">{{ t.symbol }}</small></td>
+                        <td>{{ t.date }}</td>
+                        <td>{{ t.buy_price }}</td>
+                        <td>{{ t.curr_p }}</td>
+                        <td class="fw-bold {% if t.pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">{{ t.pnl }}%</td>
+                        <td><a href="/untrack/{{ t.symbol }}" class="btn btn-sm btn-outline-secondary">解除</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
+</body>
+</html>
