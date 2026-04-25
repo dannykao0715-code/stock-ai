@@ -1,5 +1,3 @@
-fastapi
-uvicorn
+flask
+yfinance
 pandas
-requests
-jinja2
