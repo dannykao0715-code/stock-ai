@@ -1,74 +1,30 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi import Request
-import requests
-import pandas as pd
+from flask import Flask, render_template
+import yfinance as yf
+from datetime import datetime
 
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+app = Flask(__name__)
 
+def get_stock_indices():
+    # 抓取大盤與櫃買指數 (yfinance 代號)
+    twii = yf.Ticker("^TWII").fast_info['last_price']
+    twoii = yf.Ticker("^TWOII").fast_info['last_price']
+    return round(twii, 2), round(twoii, 2)
 
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request}
-    )
+@app.route('/')
+def index():
+    # 1. 取得即時時間
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 2. 取得指數 (嘗試抓取，若失敗給予預設值 0)
+    try:
+        tw_idx, otc_idx = get_stock_indices()
+    except:
+        tw_idx, otc_idx = 0, 0
+        
+    return render_template('index.html', 
+                           current_time=now, 
+                           tw_idx=tw_idx, 
+                           otc_idx=otc_idx)
 
-
-def get_data(symbol):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.TW"
-    res = requests.get(url).json()
-
-    close = res["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-    volume = res["chart"]["result"][0]["indicators"]["quote"][0]["volume"]
-
-    return pd.Series(close).dropna(), pd.Series(volume).dropna()
-
-
-def score(price, volume):
-    s = 0
-
-    # 底底高
-    if price.iloc[-1] > price.iloc[-5]:
-        s += 30
-
-    # 爆量
-    if volume.iloc[-1] > volume.mean()*1.5:
-        s += 30
-
-    # 突破前高
-    if price.iloc[-1] > price.max()*0.95:
-        s += 40
-
-    return s
-
-
-@app.get("/recommendations")
-def rec():
-    stocks = [
-        "2330",
-        "2317",
-        "2303",
-        "2603",
-        "2454",
-        "2382"
-    ]
-
-    result = []
-
-    for s in stocks:
-        try:
-            price, volume = get_data(s)
-            sc = score(price, volume)
-
-            if sc >= 60:
-                result.append({
-                    "stock": s,
-                    "score": sc
-                })
-        except:
-            continue
-
-    return result
+if __name__ == "__main__":
+    app.run(debug=True)
