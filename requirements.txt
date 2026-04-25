@@ -1,7 +1,5 @@
 flask
 yfinance
 pandas
-numpy
-scipy
+schedule
 requests
-beautifulsoup4
