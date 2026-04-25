@@ -1,54 +1,31 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-Hant">
 <head>
-    <title>AI股票系統</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <title>AI 股市監測站</title>
     <style>
-        body{
-            font-family: Arial;
-            background:#111;
-            color:white;
-            text-align:center;
-        }
-        .box{
-            background:#222;
-            margin:20px;
-            padding:20px;
-            border-radius:10px;
-        }
+        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .index-val { font-size: 24px; color: #ff4d4d; }
     </style>
 </head>
 <body>
+    <h1>我的 AI 股市監測網站</h1>
+    
+    <div class="card">
+        <h3>1. 即時時間</h3>
+        <p>{{ current_time }}</p>
+    </div>
 
-<h1>AI 股票監測系統</h1>
+    <div class="card">
+        <h3>2. 指數監測</h3>
+        <p>加權指數：<span class="index-val">{{ tw_idx }}</span></p>
+        <p>櫃買指數：<span class="index-val">{{ otc_idx }}</span></p>
+    </div>
 
-<div class="box">
-    <h2 id="time"></h2>
-</div>
-
-<div class="box">
-    <h2>今日推薦股票</h2>
-    <div id="stocks"></div>
-</div>
-
-<script>
-function updateTime(){
-    document.getElementById("time").innerHTML=
-    new Date().toLocaleString();
-}
-setInterval(updateTime,1000);
-updateTime();
-
-fetch("/recommendations")
-.then(res=>res.json())
-.then(data=>{
-    let html="";
-    data.forEach(stock=>{
-        html+=`<p>${stock.stock} 分數:${stock.score}</p>`
-    })
-    document.getElementById("stocks").innerHTML=html
-})
-</script>
-
+    <div class="card">
+        <h3>3. 選股推薦 (開發中...)</h3>
+        <p>AI 正在學習您的選股邏輯...</p>
+    </div>
 </body>
 </html>
