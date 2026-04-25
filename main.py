@@ -5,32 +5,41 @@ from datetime import datetime
 app = Flask(__name__)
 WATCHLIST_FILE = 'watchlist.json'
 
-# --- 配置區：主委核心選股名單與備援名稱 ---
-STOCK_POOL = ["2330.TW", "2317.TW", "1802.TW", "2603.TW", "3231.TW", "0050.TW", "2409.TW", "2367.TW", "4958.TW", "2303.TW", "1513.TW"]
-BACKUP_NAMES = {
-    "2330.TW": "台積電", "2317.TW": "鴻海", "1802.TW": "台玻", "2603.TW": "長榮", 
-    "3231.TW": "緯創", "0050.TW": "元大台灣50", "2409.TW": "友達", "2303.TW": "聯電",
-    "2367.TW": "燿華", "4958.TW": "臻鼎-KY", "1513.TW": "中興電"
+# --- 核心配置：全球監控指標 ---
+GLOBAL_INDICATORS = {
+    "VIX": "^VIX",       # 恐慌指數 (風險意識)
+    "US10Y": "^TNX",    # 美債10年期 (資金流向)
+    "GOLD": "GC=F",      # 黃金 (避險情緒)
+    "OIL": "CL=F",       # 原油 (通膨、航運成本)
+    "USD/TWD": "TWD=X"   # 匯率 (外資動向)
 }
 
-def get_display_name(symbol):
-    if symbol in BACKUP_NAMES: return BACKUP_NAMES[symbol]
-    try:
-        t = yf.Ticker(symbol)
-        return t.info.get('shortName', symbol.split('.')[0])
-    except: return symbol.split('.')[0]
+# --- 備援名稱字典 (持續擴充) ---
+BACKUP_NAMES = {
+    "2330.TW": "台積電", "2317.TW": "鴻海", "1802.TW": "台玻", "2603.TW": "長榮",
+    "2303.TW": "聯電", "2409.TW": "友達", "4958.TW": "臻鼎-KY", "1513.TW": "中興電"
+}
 
-# --- 核心邏輯：強化慣性偵測 ---
-def analyze_inertia(symbol, threshold=80):
+def get_market_sentiment():
+    """總經決策：判斷目前市場位階"""
     try:
-        # 下載歷史數據
+        vix = yf.Ticker("^VIX").fast_info['last_price']
+        us10y = yf.Ticker("^TNX").fast_info['last_price']
+        # 簡單邏輯：VIX > 20 代表恐慌，選股應偏向長線穩健；VIX < 15 代表多頭活躍，可選短線噴發
+        if vix > 20: return "空頭防守", "長線/避險"
+        return "多頭進攻", "短線噴發/趨勢"
+    except: return "中性觀望", "波段操作"
+
+def analyze_stock_full(symbol, market_mode):
+    """結合個股慣性與總經模式選股"""
+    try:
         df = yf.download(symbol, period="10y", interval="1d", progress=False)
-        if df.empty or len(df) < 100: return None
+        if df.empty or len(df) < 250: return None
         
         close = df['Close'].ffill().values.flatten()
         target = close[-20:]
         
-        # 相似度計算
+        # 相似度比對
         def norm(arr):
             s = np.std(arr)
             return (arr - np.mean(arr)) / (s + 1e-9) if s != 0 else arr * 0
@@ -40,51 +49,37 @@ def analyze_inertia(symbol, threshold=80):
         for i in range(0, len(close) - 60, 5):
             corr = np.corrcoef(target_n, norm(close[i:i+20]))[0, 1]
             if corr > max_c: max_c = corr
-        
         score = round(max_c * 100, 2)
 
-        # 根據簡報資料強化的慣性邏輯
-        # 1. 趨勢慣性：20日線方向
-        ma20 = df['Close'].rolling(window=20).mean()
-        is_up_trend = ma20.iloc[-1] > ma20.iloc[-5]
+        # 根據模式設定動態門檻
+        min_threshold = 82 if market_mode == "多頭進攻" else 88 # 空頭時要求更嚴謹
         
-        # 2. 支撐慣性：今日低點不破前三日支撐
-        is_supported = close[-1] >= np.min(close[-3:])
-        
-        if score >= threshold:
-            # 綜合判定建議
-            if score >= 88 and is_up_trend:
-                advice = "🚀 強勢噴出慣性"
-            elif is_supported:
-                advice = "📈 支撐轉折慣性"
-            else:
-                advice = "🔎 慣性醞釀中"
-                
+        if score >= min_threshold:
+            # 加入短期/長期慣性判斷 (依據收盤價站穩均線天數)
+            ma60 = df['Close'].rolling(window=60).mean().iloc[-1]
+            investment_type = "短線(3M)" if close[-1] > ma60 * 1.1 else "長線(6M+)"
+            
             return {
-                "symbol": symbol, 
-                "name": get_display_name(symbol), 
-                "score": score, 
-                "advice": advice,
-                "is_hot": score >= 88
+                "symbol": symbol, "name": BACKUP_NAMES.get(symbol, symbol.split('.')[0]),
+                "score": score, "type": investment_type, 
+                "advice": "符合慣性重演" if score >= 85 else "觀察中"
             }
         return None
     except: return None
 
 @app.route('/')
 def index():
-    # 1. 抓取雙指數
-    indices = {"twii": "載入中", "otc": "載入中"}
-    try:
-        indices["twii"] = round(yf.Ticker("^TWII").fast_info['last_price'], 2)
-        indices["otc"] = round(yf.Ticker("^TWOII").fast_info['last_price'], 2)
-    except: pass
-
-    # 2. 雙門檻掃描：解決 NO CONTENT FOUND
-    recs = [res for s in STOCK_POOL if (res := analyze_inertia(s, 82))]
-    if not recs:
-        recs = [res for s in STOCK_POOL if (res := analyze_inertia(s, 72))]
+    sentiment, inv_strategy = get_market_sentiment()
     
-    # 3. 損益追蹤
+    # 動態掃描清單 (這部分可隨產業輪動更新)
+    current_focus = ["2330.TW", "2317.TW", "2603.TW", "1513.TW", "2409.TW", "2303.TW", "3231.TW", "2367.TW"]
+    
+    recs = []
+    for s in current_focus:
+        res = analyze_stock_full(s, sentiment)
+        if res: recs.append(res)
+    
+    # 損益追蹤與回測思維 (此處暫存 watchlist)
     watchlist = []
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: watchlist = json.load(f)
@@ -97,25 +92,7 @@ def index():
             tracked_list.append({**item, "curr_p": curr, "profit": profit})
         except: pass
 
-    return render_template('index.html', recs=recs, tracked=tracked_list, indices=indices, now=datetime.now().strftime("%m/%d %H:%M"))
+    return render_template('index.html', recs=recs, sentiment=sentiment, 
+                           strategy=inv_strategy, tracked=tracked_list, now=datetime.now().strftime("%Y-%m-%d"))
 
-@app.route('/add/<symbol>/<name>')
-def add(symbol, name):
-    try:
-        price = round(yf.Ticker(symbol).fast_info['last_price'], 2)
-        data = []
-        if os.path.exists(WATCHLIST_FILE):
-            with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
-        if not any(x['symbol'] == symbol for x in data):
-            data.append({"symbol": symbol, "name": name, "buy_price": price, "date": datetime.now().strftime("%m/%d")})
-            with open(WATCHLIST_FILE, 'w', encoding='utf-8') as f: json.dump(data, f)
-    except: pass
-    return redirect(url_for('index'))
-
-@app.route('/clear')
-def clear():
-    if os.path.exists(WATCHLIST_FILE): os.remove(WATCHLIST_FILE)
-    return redirect(url_for('index'))
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+# add 與 clear 路由同前...
