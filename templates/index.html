@@ -1,124 +1,36 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>AI 股市決策終極版</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: 'Microsoft JhengHei', sans-serif; }
-        .card-main { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        .index-val { font-size: 2.2rem; font-weight: bold; color: #ffffff; }
-        .btn-scan { background: #238636; color: white; padding: 15px; font-size: 1.3rem; border-radius: 10px; text-decoration: none; display: block; text-align: center; border: none; }
-        .btn-scan:hover { background: #2ea043; color: white; }
-        .pnl-up { color: #f85149; } .pnl-down { color: #3fb950; }
-        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.85rem; font-weight: bold; background: #30363d; }
-    </style>
-</head>
-<body>
-<div class="container py-4">
-    <div class="card-main shadow">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h4 class="text-info m-0">📊 全市場決策儀表板</h4>
-            <span id="realtime-clock" class="text-secondary fw-bold" style="font-family: monospace; font-size: 1.1rem;">正在校準系統時間...</span>
-        </div>
-        <hr class="border-secondary">
-        <div class="row text-center">
-            <div class="col-6 border-end border-secondary">
-                <div class="small text-secondary mb-1">台股加權指數</div>
-                <div class="index-val">{{ market.twii }}</div>
-            </div>
-            <div class="col-6">
-                <div class="small text-secondary mb-1">櫃買指數 (OTC)</div>
-                <div class="index-val">{{ market.otc }}</div>
-            </div>
-        </div>
-    </div>
+{% if recs %}
+<div class="card-main border-success">
+    <h5 class="text-success fw-bold mb-3">🔍 AI 短線 + 波段選股</h5>
+    <div class="row">
+        {% for r in recs %}
+        <div class="col-md-4 mb-3">
+            <div class="p-3 border border-secondary rounded bg-dark shadow-sm">
 
-    {% if alerts %}
-    <div class="alert alert-warning border-warning bg-dark text-warning shadow" role="alert">
-        <h6 class="alert-heading fw-bold">⚠️ 收盤異常狀態警示：</h6>
-        <ul class="mb-0">
-            {% for a in alerts %} <li>{{ a }}</li> {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    <a href="/?scan=true" class="btn-scan shadow mb-4">🚀 開始 AI 全市場地毯式選股 (1,800+ 標的掃描)</a>
-
-    <div class="card-main">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="text-danger fw-bold m-0">📉 模擬交易追蹤清單</h5>
-            <div class="h5 m-0">當前累計損益: <span class="{% if total_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %} fw-bold">{{ total_pnl }}%</span></div>
-        </div>
-        <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle">
-                <thead class="text-secondary">
-                    <tr>
-                        <th>標的名稱</th><th>成本價</th><th>目前價</th><th>單筆損益</th><th>AI 診斷</th><th>操作建議</th><th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for t in trades %}
-                    <tr>
-                        <td><span class="fw-bold">{{ t.name }}</span><br><small class="text-muted">{{ t.symbol }}</small></td>
-                        <td>{{ t.buy_price }}</td>
-                        <td>{{ t.curr_p }}</td>
-                        <td class="fw-bold {% if t.pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">{{ t.pnl }}%</td>
-                        <td><span class="status-badge {{ t.diag.color }}">{{ t.diag.status }}</span></td>
-                        <td class="{{ t.diag.color }} fw-bold">{{ t.diag.advice }}</td>
-                        <td><a href="/untrack/{{ t.symbol }}" class="btn btn-sm btn-outline-secondary">解除</a></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    {% if recs %}
-    <div class="card-main border-success">
-        <h5 class="text-success fw-bold mb-3">🔍 AI 強勢海選推薦</h5>
-        <div class="row">
-            {% for r in recs %}
-            <div class="col-md-4 mb-3">
-                <div class="p-3 border border-secondary rounded bg-dark shadow-sm">
-                    <div class="d-flex justify-content-between">
-                        <span class="fw-bold">{{ r.name }}</span>
-                        <span class="text-secondary small">{{ r.symbol }}</span>
-                    </div>
-                    <div class="h3 my-2">${{ r.price }}</div>
-                    <div class="text-danger small mb-2">5日強度: +{{ r.change }}%</div>
-                    <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-sm btn-outline-danger w-100">追蹤模擬交易</a>
+                <div class="d-flex justify-content-between">
+                    <span class="fw-bold">{{ r.name }}</span>
+                    <span class="text-secondary small">{{ r.symbol }}</span>
                 </div>
+
+                <div class="h3 my-2">${{ r.price }}</div>
+
+                <div class="text-danger small mb-1">
+                    5日漲幅: +{{ r.change }}%
+                </div>
+
+                <div class="small mb-2">
+                    {% for s in r.signals %}
+                        <span class="badge bg-success me-1">{{ s }}</span>
+                    {% endfor %}
+                </div>
+
+                <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}"
+                   class="btn btn-sm btn-outline-danger w-100">
+                   加入模擬交易
+                </a>
+
             </div>
-            {% endfor %}
         </div>
+        {% endfor %}
     </div>
-    {% endif %}
 </div>
-
-<script>
-    // 即時時鐘邏輯
-    function updateClock() {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const hh = String(now.getHours()).padStart(2, '0');
-        const mm = String(now.getMinutes()).padStart(2, '0');
-        const ss = String(now.getSeconds()).padStart(2, '0');
-        document.getElementById('realtime-clock').textContent = `系統更新時間：${y}-${m}-${d} ${hh}:${mm}:${ss}`;
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
-
-    // 瀏覽器推送通知
-    {% if alerts %}
-    if (Notification.permission === "granted") {
-        new Notification("股市診斷警示", { body: "您的追蹤清單中有標的達成停損/停利條件！" });
-    } else if (Notification.permission !== "denied") {
-        Notification.requestPermission();
-    }
-    {% endif %}
-</script>
-</body>
-</html>
+{% endif %}
