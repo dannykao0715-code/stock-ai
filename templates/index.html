@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI股票系統</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body{
+            font-family: Arial;
+            background:#111;
+            color:white;
+            text-align:center;
+        }
+        .box{
+            background:#222;
+            margin:20px;
+            padding:20px;
+            border-radius:10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>AI 股票監測系統</h1>
+
+<div class="box">
+    <h2 id="time"></h2>
+</div>
+
+<div class="box">
+    <h2>今日推薦股票</h2>
+    <div id="stocks"></div>
+</div>
+
+<script>
+function updateTime(){
+    document.getElementById("time").innerHTML=
+    new Date().toLocaleString();
+}
+setInterval(updateTime,1000);
+updateTime();
+
+fetch("/recommendations")
+.then(res=>res.json())
+.then(data=>{
+    let html="";
+    data.forEach(stock=>{
+        html+=`<p>${stock.stock} 分數:${stock.score}</p>`
+    })
+    document.getElementById("stocks").innerHTML=html
+})
+</script>
+
+</body>
+</html>
