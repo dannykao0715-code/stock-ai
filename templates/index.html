@@ -3,81 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 股市決策終極版</title>
+    <title>AI 全產業監控系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        :root { --bg: #0b0f19; --card: #161b2c; --text: #f1f5f9; --accent: #38bdf8; }
-        body { background-color: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; padding-bottom: 50px; }
-        .market-header { background: linear-gradient(145deg, #1e293b, #0f172a); border: 1px solid #334155; border-radius: 20px; padding: 20px; margin-bottom: 25px; }
-        .stk-card { background: var(--card); border: 1px solid #2d3748; border-radius: 16px; padding: 16px; margin-bottom: 12px; }
-        .idx-val { font-size: 1.1rem; font-weight: bold; color: #fff; }
-        .badge-ai { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid var(--accent); }
-        .profit-up { color: #fb7185; } .profit-down { color: #34d399; }
-        .btn-add { background: #ef4444; color: white; border: none; font-weight: bold; border-radius: 8px; }
+        body { background-color: #020617; color: #f8fafc; font-family: sans-serif; padding-bottom: 60px; }
+        /* 儀表板視覺強化 */
+        .market-header { background: #0f172a; border: 2px solid #334155; border-radius: 20px; padding: 20px; margin-bottom: 25px; }
+        .val-sentiment { color: #facc15; font-weight: 800; font-size: 1.25rem; } /* 亮黃 */
+        .val-strategy { color: #38bdf8; font-weight: 800; font-size: 1.25rem; }  /* 亮藍 */
+        .val-index { color: #ffffff; font-weight: bold; font-size: 1.4rem; text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+        /* 產業分類顯示 */
+        .ind-group { border-left: 4px solid #818cf8; padding-left: 12px; margin: 25px 0 15px; color: #818cf8; font-weight: bold; font-size: 1rem; }
+        .stk-card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 15px; margin-bottom: 10px; }
+        .badge-type { background: rgba(129, 140, 248, 0.15); color: #a5b4fc; border: 1px solid #818cf8; font-size: 0.65rem; }
     </style>
 </head>
 <body>
 <div class="container py-3">
     <div class="market-header shadow-lg">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="fw-bold text-info mb-0">全市場決策儀表板</h5>
-            <span class="text-muted small text-end">系統時間: {{ now }}</span>
+            <h5 class="fw-bold text-white mb-0">全產業決策監測</h5>
+            <span class="text-secondary small">{{ now }}</span>
         </div>
         <div class="row g-2 text-center mb-3">
-            <div class="col-6"><div class="bg-dark bg-opacity-50 p-2 rounded"><div class="small text-secondary">台股加權</div><div class="idx-val">{{ intel.twii }}</div></div></div>
-            <div class="col-6"><div class="bg-dark bg-opacity-50 p-2 rounded"><div class="small text-secondary">櫃買指數</div><div class="idx-val">{{ intel.otc }}</div></div></div>
+            <div class="col-6"><div class="bg-black bg-opacity-40 p-2 rounded"><div class="small text-muted">加權指數</div><div class="val-index">{{ intel.twii }}</div></div></div>
+            <div class="col-6"><div class="bg-black bg-opacity-40 p-2 rounded"><div class="small text-muted">櫃買指數</div><div class="val-index">{{ intel.otc }}</div></div></div>
         </div>
-        <div class="row g-2 text-center border-top border-secondary pt-3">
-            <div class="col-6">
-                <div class="small text-secondary">市場情緒: <span class="text-white fw-bold">{{ intel.sentiment }}</span></div>
-                <div class="small text-secondary">VIX: <span class="text-warning">{{ intel.vix }}</span></div>
-            </div>
-            <div class="col-6">
-                <div class="small text-secondary">建議戰術: <span class="text-warning fw-bold">{{ intel.strategy }}</span></div>
-                <div class="small text-secondary">美元: <span class="text-info">{{ intel.usd }}</span></div>
-            </div>
+        <div class="row text-center pt-2">
+            <div class="col-6"><div class="small text-muted">市場位階</div><div class="val-sentiment">{{ intel.sentiment }}</div></div>
+            <div class="col-6"><div class="small text-muted">建議戰術</div><div class="val-strategy">{{ intel.strategy }}</div></div>
         </div>
     </div>
 
-    <h6 class="mb-3 text-secondary border-start border-info ps-2 border-3">🔍 AI 慣性推薦 (大數據海選)</h6>
+    <h6 class="text-secondary mb-3 border-start border-danger ps-2 border-3">🔍 全產業大數據海選結果</h6>
+    {% for industry, recs in all_recs.items() %}
+    <div class="ind-group">{{ industry }}</div>
     {% for rec in recs %}
-    <div class="stk-card">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <span class="badge badge-ai mb-2">{{ rec.type }}</span>
-                <div class="h5 fw-bold mb-1">{{ rec.symbol }}</div>
-                <div class="small text-warning">AI 相似度: {{ rec.score }}% <span class="ms-2 text-info">{{ rec.advice }}</span></div>
-            </div>
-            <div class="text-end">
-                <div class="h5 fw-bold text-white mb-2">{{ rec.price }}</div>
-                <a href="/add/{{ rec.symbol }}/{{ rec.price }}" class="btn btn-add btn-sm px-3">追蹤</a>
-            </div>
+    <div class="stk-card d-flex justify-content-between align-items-center">
+        <div>
+            <span class="badge badge-type mb-1">{{ rec.type }}</span>
+            <div class="h5 fw-bold text-white mb-0">{{ rec.symbol }}</div>
+            <div class="small text-warning">AI 相似度 {{ rec.score }}%</div>
+        </div>
+        <div class="text-end">
+            <div class="h5 fw-bold mb-2">{{ rec.price }}</div>
+            <a href="/add/{{ rec.symbol }}/{{ rec.price }}" class="btn btn-sm btn-danger px-4 fw-bold">追蹤回測</a>
         </div>
     </div>
-    {% else %}
-    <div class="text-center py-5 text-muted">目前市場強度未達 AI 門檻，建議空手。</div>
+    {% endfor %}
     {% endfor %}
 
-    <div class="mt-4">
-        <h6 class="text-secondary mb-3 border-start border-danger ps-2 border-3">💰 策略獲利回測</h6>
-        <div class="stk-card p-0 overflow-hidden">
-            {% for item in tracked %}
-            <div class="d-flex justify-content-between align-items-center p-3 border-bottom border-secondary border-opacity-10">
-                <div>
-                    <div class="fw-bold">{{ item.symbol }}</div>
-                    <div class="extra-small text-muted">買入 {{ item.buy_price }} ({{ item.date }})</div>
-                </div>
-                <div class="text-end">
-                    <div class="fw-bold text-white">{{ item.curr_p }}</div>
-                    <div class="fw-bold {{ 'profit-up' if item.profit > 0 else 'profit-down' }}">
-                        {{ '+' if item.profit > 0 }}{{ item.profit }}%
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-            <div class="p-2 text-center"><a href="/clear" class="btn btn-link btn-sm text-secondary">清空所有回測紀錄</a></div>
-        </div>
-    </div>
+    {% if not all_recs %}
+    <div class="text-center py-5 text-secondary">--- 當前市場強度未達 AI 門檻，建議空手觀察 ---</div>
+    {% endif %}
 </div>
 </body>
 </html>
