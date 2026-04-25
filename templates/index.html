@@ -1,32 +1,28 @@
 {% if recs %}
-<div class="card-main border-success">
-    <h5 class="text-success fw-bold mb-3">🔍 AI 短線 + 波段選股</h5>
+<div class="container mt-4">
+    <h3 class="text-success">短線 + 波段選股</h3>
     <div class="row">
         {% for r in recs %}
         <div class="col-md-4 mb-3">
-            <div class="p-3 border border-secondary rounded bg-dark shadow-sm">
+            <div class="card bg-dark text-white p-3">
 
-                <div class="d-flex justify-content-between">
-                    <span class="fw-bold">{{ r.name }}</span>
-                    <span class="text-secondary small">{{ r.symbol }}</span>
-                </div>
+                <h5>{{ r.name }}</h5>
+                <small>{{ r.symbol }}</small>
 
-                <div class="h3 my-2">${{ r.price }}</div>
+                <h3>${{ r.price }}</h3>
+                <div>漲幅: +{{ r.change }}%</div>
 
-                <div class="text-danger small mb-1">
-                    5日漲幅: +{{ r.change }}%
-                </div>
-
-                <div class="small mb-2">
+                <div>
                     {% for s in r.signals %}
-                        <span class="badge bg-success me-1">{{ s }}</span>
+                        <span class="badge bg-success">{{ s }}</span>
                     {% endfor %}
                 </div>
 
-                <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}"
-                   class="btn btn-sm btn-outline-danger w-100">
-                   加入模擬交易
-                </a>
+                {% if r.winrate %}
+                <div class="mt-2">
+                    🎯 勝率: {{ r.winrate }}%
+                </div>
+                {% endif %}
 
             </div>
         </div>
