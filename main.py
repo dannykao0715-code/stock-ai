@@ -1,48 +1,55 @@
-import os, json, numpy as np, yfinance as yf, requests
-from flask import Flask, render_template, redirect, url_for
-from datetime import datetime
+import os, json, numpy as np, yfinance as yf
+from flask import Flask, render_template, redirect, url_for, request
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 WATCHLIST_FILE = 'watchlist.json'
 
-# --- 核心配置：全球監控指標 ---
-GLOBAL_INDICATORS = {
-    "VIX": "^VIX",       # 恐慌指數 (風險意識)
-    "US10Y": "^TNX",    # 美債10年期 (資金流向)
-    "GOLD": "GC=F",      # 黃金 (避險情緒)
-    "OIL": "CL=F",       # 原油 (通膨、航運成本)
-    "USD/TWD": "TWD=X"   # 匯率 (外資動向)
+# --- 1. 全球宏觀監控清單 ---
+MACRO_TICKERS = {
+    "VIX": "^VIX",         # 恐慌指數 (風險指標)
+    "US10Y": "^TNX",       # 美債10年期 (資金成本)
+    "USD_TWD": "TWD=X",    # 台幣匯率 (外資動向)
+    "GOLD": "GC=F",        # 黃金 (避險情緒)
+    "OIL": "CL=F"          # 原油 (通膨/成本)
 }
 
-# --- 備援名稱字典 (持續擴充) ---
+# --- 2. 名稱備援與產業池 ---
+# 系統會動態掃描這些核心產業標的
 BACKUP_NAMES = {
-    "2330.TW": "台積電", "2317.TW": "鴻海", "1802.TW": "台玻", "2603.TW": "長榮",
-    "2303.TW": "聯電", "2409.TW": "友達", "4958.TW": "臻鼎-KY", "1513.TW": "中興電"
+    "2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科",
+    "2603.TW": "長榮", "2609.TW": "陽明", "1513.TW": "中興電",
+    "2308.TW": "台達電", "2382.TW": "廣達", "3231.TW": "緯創",
+    "2409.TW": "友達", "1802.TW": "台玻", "0050.TW": "元大台灣50"
 }
 
-def get_market_sentiment():
-    """總經決策：判斷目前市場位階"""
+def get_market_context():
+    """總體經濟判斷：決定目前市場情緒"""
     try:
         vix = yf.Ticker("^VIX").fast_info['last_price']
         us10y = yf.Ticker("^TNX").fast_info['last_price']
-        # 簡單邏輯：VIX > 20 代表恐慌，選股應偏向長線穩健；VIX < 15 代表多頭活躍，可選短線噴發
-        if vix > 20: return "空頭防守", "長線/避險"
-        return "多頭進攻", "短線噴發/趨勢"
-    except: return "中性觀望", "波段操作"
+        
+        if vix > 22:
+            return "空頭防守", "側重高殖利率/避險個股", 88 # 門檻調高
+        elif vix < 16:
+            return "多頭進攻", "側重強勢慣性/噴發個股", 80 # 門檻調低
+        else:
+            return "中性震盪", "波段操作/區間慣性", 84
+    except:
+        return "數據連線中", "謹慎操作", 82
 
-def analyze_stock_full(symbol, market_mode):
-    """結合個股慣性與總經模式選股"""
+def analyze_logic(symbol, threshold):
+    """整合 K 線慣性與均線斜率"""
     try:
         df = yf.download(symbol, period="10y", interval="1d", progress=False)
-        if df.empty or len(df) < 250: return None
+        if df.empty or len(df) < 100: return None
         
         close = df['Close'].ffill().values.flatten()
         target = close[-20:]
         
-        # 相似度比對
+        # 相似度比對 (AI 部分)
         def norm(arr):
-            s = np.std(arr)
-            return (arr - np.mean(arr)) / (s + 1e-9) if s != 0 else arr * 0
+            s = np.std(arr); return (arr - np.mean(arr)) / (s + 1e-9) if s != 0 else arr * 0
         
         target_n = norm(target)
         max_c = -1
@@ -51,35 +58,39 @@ def analyze_stock_full(symbol, market_mode):
             if corr > max_c: max_c = corr
         score = round(max_c * 100, 2)
 
-        # 根據模式設定動態門檻
-        min_threshold = 82 if market_mode == "多頭進攻" else 88 # 空頭時要求更嚴謹
+        # 趨勢慣性 (MA20 斜率)
+        ma20 = df['Close'].rolling(window=20).mean()
+        is_up = ma20.iloc[-1] > ma20.iloc[-3]
         
-        if score >= min_threshold:
-            # 加入短期/長期慣性判斷 (依據收盤價站穩均線天數)
+        # 支撐慣性 (今日收盤不破昨日低點)
+        is_supported = close[-1] >= df['Low'].iloc[-2]
+
+        if score >= threshold:
+            name = BACKUP_NAMES.get(symbol, symbol.split('.')[0])
+            # 長短線判斷
             ma60 = df['Close'].rolling(window=60).mean().iloc[-1]
-            investment_type = "短線(3M)" if close[-1] > ma60 * 1.1 else "長線(6M+)"
+            inv_type = "長線優選" if close[-1] > ma60 else "短線轉折"
             
             return {
-                "symbol": symbol, "name": BACKUP_NAMES.get(symbol, symbol.split('.')[0]),
-                "score": score, "type": investment_type, 
-                "advice": "符合慣性重演" if score >= 85 else "觀察中"
+                "symbol": symbol, "name": name, "score": score, 
+                "advice": "🚀 強慣性" if is_up else "📈 穩支撐",
+                "type": inv_type, "is_hot": score >= 88
             }
         return None
     except: return None
 
 @app.route('/')
 def index():
-    sentiment, inv_strategy = get_market_sentiment()
+    sentiment, strategy, dynamic_threshold = get_market_context()
     
-    # 動態掃描清單 (這部分可隨產業輪動更新)
-    current_focus = ["2330.TW", "2317.TW", "2603.TW", "1513.TW", "2409.TW", "2303.TW", "3231.TW", "2367.TW"]
+    # 執行掃描 (主委關注池)
+    scan_list = list(BACKUP_NAMES.keys())
+    recs = [res for s in scan_list if (res := analyze_logic(s, dynamic_threshold))]
     
-    recs = []
-    for s in current_focus:
-        res = analyze_stock_full(s, sentiment)
-        if res: recs.append(res)
-    
-    # 損益追蹤與回測思維 (此處暫存 watchlist)
+    # 排序：相似度高優先
+    recs = sorted(recs, key=lambda x: x['score'], reverse=True)
+
+    # 損益追蹤與回測
     watchlist = []
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: watchlist = json.load(f)
@@ -93,6 +104,26 @@ def index():
         except: pass
 
     return render_template('index.html', recs=recs, sentiment=sentiment, 
-                           strategy=inv_strategy, tracked=tracked_list, now=datetime.now().strftime("%Y-%m-%d"))
+                           strategy=strategy, tracked=tracked_list, 
+                           now=datetime.now().strftime("%Y-%m-%d"))
 
-# add 與 clear 路由同前...
+@app.route('/add/<symbol>/<name>')
+def add(symbol, name):
+    try:
+        price = round(yf.Ticker(symbol).fast_info['last_price'], 2)
+        data = []
+        if os.path.exists(WATCHLIST_FILE):
+            with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+        if not any(x['symbol'] == symbol for x in data):
+            data.append({"symbol": symbol, "name": name, "buy_price": price, "date": datetime.now().strftime("%m/%d")})
+            with open(WATCHLIST_FILE, 'w', encoding='utf-8') as f: json.dump(data, f)
+    except: pass
+    return redirect(url_for('index'))
+
+@app.route('/clear')
+def clear():
+    if os.path.exists(WATCHLIST_FILE): os.remove(WATCHLIST_FILE)
+    return redirect(url_for('index'))
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
