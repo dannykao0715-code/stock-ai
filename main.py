@@ -13,17 +13,21 @@ app = Flask(__name__)
 def get_stock_indices():
     try:
         twii = yf.Ticker("^TWII").fast_info['last_price']
-        twoii = yf.Ticker("^TWOII").fast_info['last_price']
-        return round(twii, 2), round(twoii, 2)
+        # 櫃買指數若 yfinance 抓不到，給個預設或 N/A
+        try:
+            twoii = yf.Ticker("^TWOII").fast_info['last_price']
+        except:
+            twoii = "N/A"
+        return round(twii, 2), (round(twoii, 2) if isinstance(twoii, float) else twoii)
     except:
         return "N/A", "N/A"
 
-# --- 2. 自動抓取今日成交量前 20 名 (爬蟲) ---
+# --- 2. 自動抓取今日成交量前 20 名 (Yahoo 爬蟲) ---
 def get_top_stocks():
     try:
         url = "https://tw.stock.yahoo.com/rank/volume?exchange=TAI"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
         links = soup.select('a[href*="/quote/"]')
@@ -31,6 +35,7 @@ def get_top_stocks():
         
         for link in links:
             href = link.get('href')
+            # 提取代號 (例如 2330)
             symbol = href.split('/')[-1].split('.')[0]
             if symbol.isdigit() and len(symbol) == 4:
                 full_symbol = f"{symbol}.TW"
@@ -40,17 +45,20 @@ def get_top_stocks():
         return stock_list
     except Exception as e:
         print(f"排行榜抓取失敗: {e}")
-        return ["2330.TW", "2317.TW", "2603.TW", "2382.TW", "3231.TW"]
+        # 保底清單，確保網頁不會空空的
+        return ["2330.TW", "2317.TW", "2454.TW", "2603.TW", "2303.TW", "2382.TW", "3231.TW", "1513.TW", "2881.TW", "2609.TW"]
 
 # --- 3. AI 核心：慣性比對 ---
 def analyze_inertia(symbol):
     try:
+        # 下載 10 年數據，progress=False 保持日誌乾淨
         data = yf.download(symbol, period="10y", interval="1d", progress=False)
         if data.empty or len(data) < 500: return None
         
-        # 修正後的數據補洞語法 (相容新版 Pandas)
+        # 關鍵修正：相容新版 Pandas 的補洞語法
         close_prices = data['Close'].ffill().values.flatten()
         
+        # 取得最近 20 天走勢
         current = close_prices[-20:]
         
         def norm(arr):
@@ -62,6 +70,7 @@ def analyze_inertia(symbol):
         best_match_score = -1
         best_match_date = ""
         
+        # 掃描歷史 (step=10 提升速度，避免 Railway 超時)
         for i in range(0, len(close_prices) - 60, 10):
             past_segment = close_prices[i : i+20]
             score = np.corrcoef(current_norm, norm(past_segment))[0, 1]
@@ -84,13 +93,14 @@ def index():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tw_idx, otc_idx = get_stock_indices()
     
+    # 執行自動抓取排行榜
     target_stocks = get_top_stocks()
     results = []
     
-    # 限制分析前 12 檔以確保 Railway 效能穩定
-    for s in target_stocks[:12]:
+    # 限制分析熱門前 10 檔，確保網頁讀取在 20 秒內完成
+    for s in target_stocks[:10]:
         analysis = analyze_inertia(s)
-        if analysis and analysis['score'] > 75:
+        if analysis and analysis['score'] > 70: # 稍微調低門檻讓清單更容易出現結果
             results.append(analysis)
     
     results = sorted(results, key=lambda x: x['score'], reverse=True)
@@ -102,5 +112,6 @@ def index():
                            recommendations=results)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    # Railway 會自動給 PORT，預設 8080
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
