@@ -1,27 +1,71 @@
-@app.route('/')
-def index():
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # 務必先抓指數
-    try:
-        tw_idx, otc_idx = get_stock_indices()
-    except:
-        tw_idx, otc_idx = "連線超時", "連線超時"
-    
-    target_stocks = get_top_stocks()
-    results = []
-    
-    # 限制只掃描前 5 隻，確保 Railway 不會因為跑太久而斷線 (504 Error)
-    for s in target_stocks[:5]: 
-        analysis = analyze_inertia(s)
-        if analysis and analysis['score'] > 70: # 稍微降低門檻看看有沒有結果
-            results.append(analysis)
-    
-    results = sorted(results, key=lambda x: x['score'], reverse=True)
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 股市慣性監測站</title>
+    <style>
+        body { font-family: 'PingFang TC', sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .card { background: #1a1a1a; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #333; }
+        .index-group { display: flex; gap: 40px; margin-top: 15px; }
+        .index-val { font-size: 32px; font-weight: bold; color: #ff4d4d; }
+        h1 { font-size: 24px; border-left: 5px solid #ff4d4d; padding-left: 15px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { text-align: left; color: #888; padding: 12px; border-bottom: 2px solid #333; }
+        td { padding: 15px 12px; border-bottom: 1px solid #222; }
+        .high-score { color: #00ff88; font-weight: bold; font-size: 1.1em; }
+        .badge { background: #333; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI 股市慣性監測站 <small style="color: #666; font-weight: normal;">(10Y Pattern Matcher)</small></h1>
+        
+        <div class="card">
+            <p style="color: #888; margin: 0;">系統時間：{{ current_time }}</p>
+            <div class="index-group">
+                <div>
+                    <div style="color: #aaa;">加權指數</div>
+                    <div class="index-val">{{ tw_idx }}</div>
+                </div>
+                <div>
+                    <div style="color: #aaa;">櫃買指數</div>
+                    <div class="index-val">{{ otc_idx }}</div>
+                </div>
+            </div>
+        </div>
 
-    # 這裡的變數名稱必須跟 index.html 裡 {{ }} 括起來的名稱一模一樣
-    return render_template('index.html', 
-                           current_time=now, 
-                           tw_idx=tw_idx, 
-                           otc_idx=otc_idx, 
-                           recommendations=results)
+        <div class="card">
+            <h3>🚀 慣性重演個股推薦</h3>
+            <p style="font-size: 13px; color: #666;">策略：對比當前 20 日線型與過去 10 年歷史片段，找出相似度 > 75% 之個股。</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>個股代號</th>
+                        <th>相似度</th>
+                        <th>歷史相似起始日</th>
+                        <th>操作狀態</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in recommendations %}
+                    <tr>
+                        <td><strong>{{ item.symbol }}</strong></td>
+                        <td><span class="high-score">{{ item.score }}%</span></td>
+                        <td>{{ item.history_date }}</td>
+                        <td><span class="badge">強慣性追蹤</span></td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: #555; padding: 40px;">
+                            目前排行榜中尚未掃描到高相似度個股，請稍後再試。
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
