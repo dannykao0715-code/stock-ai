@@ -3,64 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 全產業監控系統</title>
+    <title>AI 全生態鏈決策系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #030712; color: #f8fafc; font-family: sans-serif; }
+        body { background-color: #030712; color: #f8fafc; }
         .market-header { background: #111827; border: 2px solid #374151; border-radius: 15px; padding: 20px; margin-bottom: 25px; }
-        /* 解決字體消失：強制白色並加粗 */
-        .label-white { color: #ffffff !important; font-weight: 800; font-size: 0.85rem; letter-spacing: 1px; }
         .val-index { color: #ffffff; font-weight: bold; font-size: 1.5rem; }
-        .val-sentiment { color: #facc15; font-weight: 800; font-size: 1.2rem; }
-        .val-strategy { color: #38bdf8; font-weight: 800; font-size: 1.2rem; }
-        #realtime-clock { color: #94a3b8; font-size: 0.8rem; font-family: monospace; }
-        .ind-group { border-left: 4px solid #6366f1; padding-left: 12px; margin: 20px 0 10px; color: #818cf8; font-weight: bold; }
-        .stk-card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 15px; margin-bottom: 10px; }
+        .ind-group { border-left: 4px solid #6366f1; padding-left: 12px; margin: 25px 0 10px; color: #a5b4fc; font-weight: bold; }
+        .stk-card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 15px; margin-bottom: 12px; }
+        .profit-pos { color: #f87171; } .profit-neg { color: #4ade80; }
+        .label-white { color: #ffffff !important; font-weight: 800; font-size: 0.8rem; }
     </style>
 </head>
 <body>
 <div class="container py-3">
     <div class="market-header shadow">
-        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
-            <h5 class="fw-bold mb-0 text-info">全產業決策監測</h5>
-            <div id="realtime-clock">系統時間加載中...</div>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h5 class="fw-bold mb-0 text-info">全市場決策儀表板</h5>
+            <div id="clock" class="small text-secondary"></div>
         </div>
-        
         <div class="row g-3 text-center mb-4">
-            <div class="col-6">
-                <div class="bg-black bg-opacity-40 p-2 rounded">
-                    <div class="label-white mb-1">加權指數</div>
-                    <div class="val-index">{{ intel.twii }}</div>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="bg-black bg-opacity-40 p-2 rounded">
-                    <div class="label-white mb-1">櫃買指數</div>
-                    <div class="val-index">{{ intel.otc }}</div>
-                </div>
-            </div>
+            <div class="col-6"><div class="bg-black bg-opacity-30 p-2 rounded"><div class="label-white mb-1">加權指數</div><div class="val-index">{{ intel.twii }}</div></div></div>
+            <div class="col-6"><div class="bg-black bg-opacity-30 p-2 rounded"><div class="label-white mb-1">櫃買指數</div><div class="val-index">{{ intel.otc }}</div></div></div>
         </div>
-
         <div class="row text-center">
-            <div class="col-6">
-                <div class="label-white small mb-1">市場位階</div>
-                <div class="val-sentiment">{{ intel.sentiment }}</div>
-            </div>
-            <div class="col-6">
-                <div class="label-white small mb-1">建議戰術</div>
-                <div class="val-strategy">{{ intel.strategy }}</div>
-            </div>
+            <div class="col-6"><div class="label-white small">市場位階</div><div class="{{ intel.status_color }} fw-bold h5">{{ intel.sentiment }}</div><div class="small text-muted">VIX: {{ intel.vix }}</div></div>
+            <div class="col-6"><div class="label-white small">建議戰術</div><div class="text-info fw-bold h5">{{ intel.strategy }}</div><div class="small text-muted">美元: {{ intel.usd }}</div></div>
         </div>
     </div>
 
-    <h6 class="text-secondary mb-3 border-start border-danger ps-2">🔍 AI 產業矩陣海選</h6>
+    {% if tracked %}
+    <h6 class="text-secondary mb-3 border-start border-warning ps-2">🚩 我的核心觀察 (風險監控)</h6>
+    {% for t in tracked %}
+    <div class="stk-card d-flex justify-content-between align-items-center">
+        <div>
+            <div class="h6 fw-bold text-white mb-0">{{ t.name }} <small class="text-muted">{{ t.symbol }}</small></div>
+            <div class="small text-secondary">成本: {{ t.buy_price }} | {{ t.date }}</div>
+        </div>
+        <div class="text-end">
+            <div class="fw-bold {% if t.profit >= 0 %}profit-pos{% else %}profit-neg{% endif %}">{{ t.profit }}%</div>
+            <span class="badge {% if '止損' in t.action %}bg-danger{% elif '停利' in t.action %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ t.action }}</span>
+        </div>
+    </div>
+    {% endfor %}
+    <div class="mb-4 text-center"><a href="/clear" class="btn btn-sm btn-outline-secondary w-100">清空所有紀錄</a></div>
+    {% endif %}
+
+    <h6 class="text-secondary mb-3 border-start border-danger ps-2">🔍 AI 產業生態矩陣 (掃描中)</h6>
     {% for industry, recs in all_recs.items() %}
-    <div class="ind-group">{{ industry }}</div>
+    <div class="ind-group small">{{ industry }}</div>
     {% for rec in recs %}
     <div class="stk-card d-flex justify-content-between align-items-center">
         <div>
-            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary mb-1">{{ rec.type }}</span>
-            <div class="h5 fw-bold text-white mb-0">{{ rec.symbol }}</div>
+            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary mb-1">{{ rec.risk }}</span>
+            <div class="h5 fw-bold text-white mb-0">{{ rec.name }}</div>
             <div class="small text-warning">AI 相似度 {{ rec.score }}%</div>
         </div>
         <div class="text-end">
@@ -70,22 +66,12 @@
     </div>
     {% endfor %}
     {% endfor %}
-
-    {% if not all_recs %}
-    <div class="text-center py-5 text-secondary">--- 市場強度未達門檻，目前無產業起漲訊號 ---</div>
-    {% endif %}
 </div>
 
 <script>
     function updateClock() {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        const seconds = String(now.getSeconds()).padStart(2, '0');
-        document.getElementById('realtime-clock').textContent = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        document.getElementById('clock').textContent = now.toLocaleString('zh-TW', { hour12: false });
     }
     setInterval(updateClock, 1000);
     updateClock();
