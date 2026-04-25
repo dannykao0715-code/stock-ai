@@ -3,5 +3,5 @@ yfinance
 pandas
 numpy
 scipy
-beautifulsoup4
 requests
+beautifulsoup4
