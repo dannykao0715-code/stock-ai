@@ -18,7 +18,7 @@ def get_stock_indices():
     except:
         return "N/A", "N/A"
 
-# --- 2. 自動抓取今日成交量前 20 名 ---
+# --- 2. 自動抓取今日成交量前 20 名 (爬蟲) ---
 def get_top_stocks():
     try:
         url = "https://tw.stock.yahoo.com/rank/volume?exchange=TAI"
@@ -26,41 +26,33 @@ def get_top_stocks():
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 抓取所有股票代號連結
         links = soup.select('a[href*="/quote/"]')
         stock_list = []
         
         for link in links:
-            # 取得代號如 2330，並轉成 yfinance 格式 2330.TW
             href = link.get('href')
             symbol = href.split('/')[-1].split('.')[0]
             if symbol.isdigit() and len(symbol) == 4:
                 full_symbol = f"{symbol}.TW"
                 if full_symbol not in stock_list:
                     stock_list.append(full_symbol)
-            
             if len(stock_list) >= 20: break
-        
         return stock_list
     except Exception as e:
         print(f"排行榜抓取失敗: {e}")
         return ["2330.TW", "2317.TW", "2603.TW", "2382.TW", "3231.TW"]
 
-# --- 3. AI 核心：十年慣性比對 ---
+# --- 3. AI 核心：慣性比對 ---
 def analyze_inertia(symbol):
     try:
-        # 抓取 10 年數據
         data = yf.download(symbol, period="10y", interval="1d", progress=False)
-        if data.empty or len(data) < 500:
-            return None
+        if data.empty or len(data) < 500: return None
         
-        # 數據補洞：處理假日或停牌
-        close_prices = data['Close'].fillna(method='ffill').values.flatten()
+        # 修正後的數據補洞語法 (相容新版 Pandas)
+        close_prices = data['Close'].ffill().values.flatten()
         
-        # 當前走勢 (最近 20 天)
         current = close_prices[-20:]
         
-        # 正規化函數：防止除以零
         def norm(arr):
             std = np.std(arr)
             if std == 0: return arr * 0
@@ -70,12 +62,9 @@ def analyze_inertia(symbol):
         best_match_score = -1
         best_match_date = ""
         
-        # 掃描 10 年歷史 (step=10 兼顧精準度與速度)
         for i in range(0, len(close_prices) - 60, 10):
             past_segment = close_prices[i : i+20]
-            # 計算皮爾森相關係數 (Pearson Correlation)
             score = np.corrcoef(current_norm, norm(past_segment))[0, 1]
-            
             if not np.isnan(score) and score > best_match_score:
                 best_match_score = score
                 best_match_date = data.index[i].strftime('%Y-%m-%d')
@@ -93,20 +82,17 @@ def analyze_inertia(symbol):
 @app.route('/')
 def index():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # 取得指數
     tw_idx, otc_idx = get_stock_indices()
     
-    # 取得「即時熱門股」並掃描前 10 檔 (防止 Railway 超時)
     target_stocks = get_top_stocks()
     results = []
     
-    for s in target_stocks[:10]:
+    # 限制分析前 12 檔以確保 Railway 效能穩定
+    for s in target_stocks[:12]:
         analysis = analyze_inertia(s)
-        if analysis and analysis['score'] > 75: # 相似度門檻
+        if analysis and analysis['score'] > 75:
             results.append(analysis)
     
-    # 排序：相似度高者在前
     results = sorted(results, key=lambda x: x['score'], reverse=True)
 
     return render_template('index.html', 
