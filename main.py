@@ -1,107 +1,111 @@
-import os, json, numpy as np, yfinance as yf, requests
-import pandas as pd
+import os, json, numpy as np, yfinance as yf
 from flask import Flask, render_template, redirect, url_for
 from datetime import datetime
 
 app = Flask(__name__)
 WATCHLIST_FILE = 'watchlist.json'
 
-# --- 1. 總經指標與全市場獲取 ---
+# --- 1. 總經指標：決定「天時」 ---
 def get_market_sentiment():
-    """判斷總經情勢：決定進攻或防守"""
     try:
-        vix = yf.Ticker("^VIX").fast_info['last_price']
-        usd = yf.Ticker("TWD=X").fast_info['last_price'] # 美元/台幣
-        gold = yf.Ticker("GC=F").fast_info['last_price'] # 黃金
-        oil = yf.Ticker("CL=F").fast_info['last_price']  # 原油
+        # 抓取關鍵總經數據
+        vix = yf.Ticker("^VIX").fast_info['last_price']        # 恐慌指數
+        usd_twd = yf.Ticker("TWD=X").fast_info['last_price']  # 台幣匯率
+        us10y = yf.Ticker("^TNX").fast_info['last_price']     # 美債殖利率
+        oil = yf.Ticker("CL=F").fast_info['last_price']       # 原油 (通膨/成本)
         
-        # 簡易決策模型
-        if vix > 22 or usd > 32.5:
-            return "空頭/避險", 88 # 嚴格篩選
-        return "多頭/進攻", 82 # 寬鬆篩選
+        # 邏輯：匯率貶值 (>32.5) 或 VIX 高 (>20) 則防守
+        if vix > 20 or usd_twd > 32.5:
+            return "空頭防守", "挑選長線抗跌標的", 88
+        return "多頭進攻", "挑選短線爆發標的", 82
     except:
-        return "中性震盪", 85
+        return "數據獲取中", "波段操作", 85
 
-def get_full_stock_list():
-    """自動獲取全台股上市標的 (範例以關鍵 200 支為海選池，實務可擴充至全市場)"""
-    # 為了運算效率，這裡我們先以台灣 50 + 中型 100 + 產業龍頭為基礎進行「海選」
-    # 若要真正 1700 支，建議部署在效能較高的主機
-    base_list = [f"{i:04d}.TW" for i in range(1101, 9999)] 
-    return base_list
-
-# --- 2. 核心分析邏輯 (K線慣性+回測思維) ---
-def analyze_stock_logic(symbol, threshold):
+# --- 2. 核心分析：慣性與回測邏輯 ---
+def analyze_stock(symbol, threshold):
     try:
-        # 下載歷史數據 (三個月至十年的跨度)
         df = yf.download(symbol, period="5y", interval="1d", progress=False)
-        if df.empty or len(df) < 120: return None
+        if df.empty or len(df) < 250: return None
         
         close = df['Close'].ffill().values.flatten()
-        target = close[-20:] # 近 20 日慣性
+        target = close[-20:] # 當前 20 日慣性
         
-        # AI 形態比對
+        # AI 形態相似度比對
         def norm(arr):
             s = np.std(arr)
             return (arr - np.mean(arr)) / (s + 1e-9) if s != 0 else arr * 0
         
         target_n = norm(target)
         max_c = -1
-        # 這裡縮短比對步長，提高精度
-        for i in range(0, len(close) - 40, 3):
+        # 掃描歷史：尋找 10 年內最強慣性重演
+        for i in range(0, len(close) - 40, 5):
             corr = np.corrcoef(target_n, norm(close[i:i+20]))[0, 1]
             if corr > max_c: max_c = corr
         
         score = round(max_c * 100, 2)
         
         if score >= threshold:
-            # 加入位階判斷 (三個月/六個月/一年)
+            # 加入長短線判斷
             ma60 = df['Close'].rolling(window=60).mean().iloc[-1]
             ma250 = df['Close'].rolling(window=250).mean().iloc[-1]
+            curr_p = round(close[-1], 2)
             
-            # 判斷是短線爆發還是長線潛力
-            if close[-1] > ma60 and ma60 > ma250:
-                inv_type = "多頭排列(長線型)"
+            # 判斷投資屬性
+            if curr_p > ma60 and ma60 > ma250:
+                inv_type = "長線(穩健)"
             else:
-                inv_type = "低檔轉折(短線型)"
+                inv_type = "短線(轉折)"
                 
-            return {
-                "symbol": symbol, "score": score, 
-                "type": inv_type, "price": round(close[-1], 2)
-            }
-    except:
+            return {"symbol": symbol, "score": score, "type": inv_type, "price": curr_p}
         return None
+    except: return None
 
 @app.route('/')
 def index():
-    sentiment, threshold = get_market_sentiment()
+    sentiment, strategy, threshold = get_market_sentiment()
     
-    # 全市場海選 (這裡先取前 100 支做示範，以免程式跑太久)
-    all_stocks = ["2330.TW", "2317.TW", "2454.TW", "2603.TW", "1513.TW", "2382.TW", "3231.TW", "2409.TW", "1802.TW", "2303.TW", "2609.TW", "2615.TW", "2301.TW", "2357.TW"]
-    # 實際上可以透過爬蟲獲取證交所全清單：all_stocks = get_taiwan_stock_ids()
+    # 擴大海選池：包含半導體、AI、航運、金融、重電等各產業龍頭 (可持續擴充)
+    stock_pool = [
+        "2330.TW", "2317.TW", "2454.TW", "2603.TW", "1513.TW", "2382.TW", "3231.TW", 
+        "2409.TW", "2303.TW", "2609.TW", "2881.TW", "2882.TW", "2308.TW", "2357.TW",
+        "1503.TW", "1519.TW", "2367.TW", "4958.TW", "3037.TW", "2376.TW", "6235.TWO"
+    ]
     
     recs = []
-    for s in all_stocks:
-        res = analyze_stock_logic(s, threshold)
+    for s in stock_pool:
+        res = analyze_stock(s, threshold)
         if res: recs.append(res)
     
-    # 依相似度排序
     recs = sorted(recs, key=lambda x: x['score'], reverse=True)
-    
-    # 損益追蹤 (回測邏輯)
-    watchlist = []
-    if os.path.exists(WATCHLIST_FILE):
-        with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: watchlist = json.load(f)
-    
+
+    # 追蹤與回測數據
     tracked_list = []
-    for item in watchlist:
-        try:
-            curr = round(yf.Ticker(item['symbol']).fast_info['last_price'], 2)
-            profit = round(((curr - item['buy_price']) / item['buy_price']) * 100, 2)
-            tracked_list.append({**item, "curr_p": curr, "profit": profit})
-        except: pass
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f:
+            for item in json.load(f):
+                try:
+                    p = round(yf.Ticker(item['symbol']).fast_info['last_price'], 2)
+                    profit = round(((p - item['buy_price']) / item['buy_price']) * 100, 2)
+                    tracked_list.append({**item, "curr_p": p, "profit": profit})
+                except: pass
 
-    return render_template('index.html', recs=recs, sentiment=sentiment, now=datetime.now().strftime("%Y-%m-%d"))
+    return render_template('index.html', recs=recs, sentiment=sentiment, 
+                           strategy=strategy, tracked=tracked_list, now=datetime.now().strftime("%Y-%m-%d"))
 
-# add, clear 路由同前...
+@app.route('/add/<symbol>/<float:price>')
+def add(symbol, price):
+    data = []
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+    if not any(x['symbol'] == symbol for x in data):
+        data.append({"symbol": symbol, "buy_price": price, "date": datetime.now().strftime("%m/%d")})
+        with open(WATCHLIST_FILE, 'w', encoding='utf-8') as f: json.dump(data, f)
+    return redirect(url_for('index'))
+
+@app.route('/clear')
+def clear():
+    if os.path.exists(WATCHLIST_FILE): os.remove(WATCHLIST_FILE)
+    return redirect(url_for('index'))
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
