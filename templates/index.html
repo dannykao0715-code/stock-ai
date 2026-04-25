@@ -1,79 +1,27 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 股市慣性監測站</title>
-    <style>
-        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: #121212; color: #e0e0e0; padding: 20px; line-height: 1.6; }
-        .container { max-width: 1000px; margin: 0 auto; }
-        .card { background: #1e1e1e; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #333; }
-        h1, h3 { color: #ffffff; margin-top: 0; }
-        .index-group { display: flex; gap: 20px; }
-        .index-item { flex: 1; }
-        .index-val { font-size: 28px; font-weight: bold; color: #ff4d4d; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th { text-align: left; padding: 12px; border-bottom: 2px solid #444; color: #888; }
-        td { padding: 12px; border-bottom: 1px solid #333; }
-        .high-score { color: #00ff88; font-weight: bold; }
-        .time-tag { color: #aaa; font-size: 0.9em; }
-        .status-badge { background: #2e7d32; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>我的 AI 股市監測網站 <span style="font-size: 0.5em; color: #666;">專業操盤手版</span></h1>
-        
-        <div class="card">
-            <h3>1. 系統狀態</h3>
-            <p class="time-tag">即時日期時間：{{ current_time }}</p>
-            <div class="index-group">
-                <div class="index-item">
-                    <p>加權指數</p>
-                    <div class="index-val">{{ tw_idx if tw_idx else "載入中..." }}</div>
-                </div>
-                <div class="index-item">
-                    <p>櫃買指數</p>
-                    <div class="index-val">{{ otc_idx if otc_idx else "載入中..." }}</div>
-                </div>
-            </div>
-        </div>
+@app.route('/')
+def index():
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 務必先抓指數
+    try:
+        tw_idx, otc_idx = get_stock_indices()
+    except:
+        tw_idx, otc_idx = "連線超時", "連線超時"
+    
+    target_stocks = get_top_stocks()
+    results = []
+    
+    # 限制只掃描前 5 隻，確保 Railway 不會因為跑太久而斷線 (504 Error)
+    for s in target_stocks[:5]: 
+        analysis = analyze_inertia(s)
+        if analysis and analysis['score'] > 70: # 稍微降低門檻看看有沒有結果
+            results.append(analysis)
+    
+    results = sorted(results, key=lambda x: x['score'], reverse=True)
 
-        <div class="card">
-            <h3>🚀 AI 慣性監測推薦 (10年數據比對)</h3>
-            <p style="font-size: 0.85em; color: #888;">邏輯：掃描 10 年內所有片段，尋找與當前走勢相似度 > 80% 的個股</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>個股代號</th>
-                        <th>歷史相似度</th>
-                        <th>歷史對應起始日</th>
-                        <th>狀態</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in recommendations %}
-                    <tr>
-                        <td><strong>{{ item.symbol }}</strong></td>
-                        <td><span class="high-score">{{ item.score }}%</span></td>
-                        <td>{{ item.history_date }}</td>
-                        <td><span class="status-badge">慣性追蹤中</span></td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="4" style="text-align: center; color: #666; padding: 40px;">
-                            目前排行榜個股中，尚未發現符合高度慣性重演之目標。
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="card">
-            <h3>4. 選股推薦追蹤 (開發預告)</h3>
-            <p style="color: #888;">此區塊將紀錄 AI 推薦後的 N 日總損益，自動修正演算權重。</p>
-        </div>
-    </div>
-</body>
-</html>
+    # 這裡的變數名稱必須跟 index.html 裡 {{ }} 括起來的名稱一模一樣
+    return render_template('index.html', 
+                           current_time=now, 
+                           tw_idx=tw_idx, 
+                           otc_idx=otc_idx, 
+                           recommendations=results)
