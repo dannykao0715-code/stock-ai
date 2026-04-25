@@ -1,26 +1,45 @@
-<table class="table table-dark table-hover">
-    <thead>
-        <tr>
-            <th>個股名稱</th>
-            <th>相似度</th>
-            <th>法人動向</th>
-            <th>散戶(50張下)</th>
-            <th>AI 建議</th>
-            <th>操作</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for rec in recommendations %}
-        <tr>
-            <td><strong>{{ rec.name }}</strong><br><small class="text-muted">{{ rec.symbol }}</small></td>
-            <td class="text-warning">{{ rec.score }}%</td>
-            <td><span class="badge bg-primary">{{ rec.inst_buy }}</span></td>
-            <td><span class="badge bg-info text-dark">{{ rec.retail }}</span></td>
-            <td>{{ rec.advice }}</td>
-            <td>
-                <a href="/add_track/{{ rec.symbol }}/{{ rec.name }}" class="btn btn-sm btn-danger">➕ 追蹤</a>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 籌碼監測站</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Segoe UI', 'Microsoft JhengHei'; }
+        .card { background-color: #1e293b; border: none; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .badge-pro { font-size: 0.9rem; padding: 6px 12px; border-radius: 20px; }
+    </style>
+</head>
+<body>
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 fw-bold text-info">📈 AI 籌碼慣性監測站</h1>
+        <span class="text-muted small">最後更新：{{ now }}</span>
+    </div>
+
+    <div class="card p-4 mb-4">
+        <h5 class="text-secondary mb-3">加權指數：<span class="text-danger">{{ tw_idx }}</span></h5>
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle">
+                <thead>
+                    <tr class="text-muted">
+                        <th>個股</th><th>歷史相似度</th><th>散戶動態(50張下)</th><th>AI 建議</th><th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rec in recommendations %}
+                    <tr>
+                        <td><strong>{{ rec.name }}</strong> <small class="text-secondary">{{ rec.symbol }}</small></td>
+                        <td class="text-warning fw-bold">{{ rec.score }}%</td>
+                        <td><span class="badge bg-success badge-pro">{{ rec.retail }}</span></td>
+                        <td><span class="fw-bold text-info">{{ rec.advice }}</span></td>
+                        <td><a href="/add_track/{{ rec.symbol }}/{{ rec.name }}" class="btn btn-sm btn-outline-light">追蹤</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
