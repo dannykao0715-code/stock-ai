@@ -1,33 +1,77 @@
-<td>
-    <a href="/add_track/{{ rec.symbol }}" class="btn btn-sm btn-outline-danger">+ 加入追蹤</a>
-</td>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 股市監測實戰版</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: "Microsoft JhengHei", sans-serif; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; margin-bottom: 20px; }
+        .index-value { font-size: 1.8rem; font-weight: bold; color: #ff4d4d; }
+        .btn-track { font-size: 0.75rem; padding: 2px 8px; }
+        .profit-up { color: #ff4d4d; font-weight: bold; }
+        .profit-down { color: #00ff88; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📊 AI 股市慣性監測 <small style="font-size: 0.9rem; color: #666;">專業實戰版</small></h2>
+        <div class="text-end" style="font-size: 0.8rem; color: #888;">系統時間：{{ current_time }}</div>
+    </div>
 
-<div class="card mt-4">
-    <div class="card-header" style="color: #00ff88; border-bottom-color: #00ff88;">💰 實戰損益追蹤 (模擬持股)</div>
-    <div class="card-body">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>名稱</th>
-                    <th>買入價格</th>
-                    <th>現價</th>
-                    <th>累計損益</th>
-                    <th>加入日期</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in tracked_results %}
-                <tr>
-                    <td>{{ item.name }} ({{ item.symbol }})</td>
-                    <td>{{ item.buy_price }}</td>
-                    <td>{{ item.current_price }}</td>
-                    <td style="color: {{ '#ff4d4d' if item.profit > 0 else '#00ff88' }}">
-                        {{ '+' if item.profit > 0 }}{{ item.profit }}%
-                    </td>
-                    <td>{{ item.date }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="row mb-4">
+        <div class="col-6"><div class="card p-3 text-center"><div>加權指數</div><div class="index-value">{{ tw_idx }}</div></div></div>
+        <div class="col-6"><div class="card p-3 text-center"><div>櫃買指數</div><div class="index-value">{{ otc_idx }}</div></div></div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-dark text-white">🚀 AI 慣性推薦 (10年數據對比)</div>
+        <div class="table-responsive p-2">
+            <table class="table table-dark table-hover mb-0">
+                <thead><tr><th>個股</th><th>相似度</th><th>建議</th><th>歷史日期</th><th>操作</th></tr></thead>
+                <tbody>
+                    {% for rec in recommendations %}
+                    <tr>
+                        <td><strong>{{ rec.name }}</strong> <small>{{ rec.symbol }}</small></td>
+                        <td class="text-warning">{{ rec.score }}%</td>
+                        <td>{{ rec.advice }}</td>
+                        <td class="text-muted">{{ rec.history_date }}</td>
+                        <td><a href="/add_track/{{ rec.symbol }}" class="btn btn-danger btn-track">➕ 追蹤</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mt-4" style="border-left: 5px solid #00ff88;">
+        <div class="card-header bg-dark d-flex justify-content-between align-items-center">
+            <span>💰 實戰損益追蹤 (模擬持股)</span>
+            <a href="/clear_watchlist" class="btn btn-sm btn-outline-secondary" style="font-size: 0.7rem;">清空名單</a>
+        </div>
+        <div class="table-responsive p-2">
+            <table class="table table-dark mb-0">
+                <thead><tr><th>名稱</th><th>買入價</th><th>現價</th><th>累計損益</th><th>日期</th></tr></thead>
+                <tbody>
+                    {% for item in tracked_results %}
+                    <tr>
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.buy_price }}</td>
+                        <td>{{ item.curr_p }}</td>
+                        <td class="{{ 'profit-up' if item.profit > 0 else 'profit-down' }}">
+                            {{ '+' if item.profit > 0 }}{{ item.profit }}%
+                        </td>
+                        <td class="text-muted">{{ item.date }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-muted">目前尚無追蹤標的，請點擊上方按鈕加入。</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
+</body>
+</html>
