@@ -1,24 +1,21 @@
 import os, json, pandas as pd, yfinance as yf
-import time, requests
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, url_for
+from datetime import datetime
 
 app = Flask(__name__)
 
-# ===== 設定 =====
-SCAN_LIMIT = 50
-LINE_TOKEN = "你的LINE_NOTIFY_TOKEN"  # 沒有可留空
+SCAN_LIMIT = 30
+DB_FILE = "track.json"
 
 
 # ===== 市場清單 =====
 def get_full_market_list():
     try:
         tse = pd.read_html("http://isin.twse.com.tw/isin/C_public.jsp?strMode=2")[0]
-        otc = pd.read_html("http://isin.twse.com.tw/isin/C_public.jsp?strMode=4")[0]
-        df = pd.concat([tse, otc])
-        stocks = df[df[0].str.contains(r'^\d{4}\s', na=False)]
+        df = tse[tse[0].str.contains(r'^\d{4}', na=False)]
 
         market_map = {}
-        for item in stocks[0]:
+        for item in df[0]:
             code, name = item.split()[:2]
             market_map[f"{code}.TW"] = name
 
@@ -29,90 +26,38 @@ def get_full_market_list():
 
 # ===== 策略 =====
 def analyze_stock(hist):
-    try:
-        close = hist['Close']
-        vol = hist['Volume']
+    close = hist['Close']
+    change = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5] * 100
+    ma5 = close.rolling(5).mean()
+    ma20 = close.rolling(20).mean()
 
-        change = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5] * 100
+    signals = []
+    if change > 2:
+        signals.append("短線動能")
+    if ma5.iloc[-1] > ma20.iloc[-1]:
+        signals.append("多頭趨勢")
 
-        ma5 = close.rolling(5).mean()
-        ma20 = close.rolling(20).mean()
-
-        vol_ratio = vol.iloc[-1] / vol.mean()
-
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        rs = gain.rolling(14).mean() / loss.rolling(14).mean()
-        rsi = 100 - (100 / (1 + rs))
-
-        signals = []
-
-        if change > 3 and vol_ratio > 1.5 and 50 < rsi.iloc[-1] < 70:
-            signals.append("短線強勢")
-
-        if ma5.iloc[-1] > ma20.iloc[-1] and rsi.iloc[-1] > 50:
-            signals.append("波段起漲")
-
-        return signals, round(change, 2)
-
-    except:
-        return [], 0
-
-
-# ===== 安全下載（解決 yfinance 爆炸）=====
-def safe_download(symbols):
-    for i in range(3):
-        try:
-            data = yf.download(
-                symbols,
-                period="2mo",
-                group_by='ticker',
-                threads=False
-            )
-            if not data.empty:
-                return data
-        except Exception as e:
-            print("retry:", e)
-            time.sleep(2)
-    return None
-
-
-# ===== LINE =====
-def send_line(msg):
-    if not LINE_TOKEN:
-        return
-    try:
-        requests.post(
-            "https://notify-api.line.me/api/notify",
-            headers={"Authorization": f"Bearer {LINE_TOKEN}"},
-            data={"message": msg}
-        )
-    except:
-        pass
+    return signals, round(change, 2)
 
 
 # ===== 掃描 =====
 def scan_market():
-    results = []
     stocks = get_full_market_list()
-
     symbols = list(stocks.keys())[:SCAN_LIMIT]
 
-    data = safe_download(symbols)
-
-    if data is None:
-        print("❌ 抓不到資料")
+    try:
+        data = yf.download(symbols, period="1mo", group_by='ticker', threads=False)
+    except:
         return []
+
+    results = []
 
     for sym in symbols:
         try:
             if sym not in data:
                 continue
-
             hist = data[sym].dropna()
-
-            if len(hist) < 30:
+            if len(hist) < 20:
                 continue
 
             signals, change = analyze_stock(hist)
@@ -125,31 +70,116 @@ def scan_market():
                     "change": change,
                     "signals": signals
                 })
+        except:
+            continue
 
-        except Exception as e:
-            print("單支錯誤:", sym, e)
-
-    results = sorted(results, key=lambda x: x['change'], reverse=True)
-
-    # LINE通知
-    if results:
-        msg = "\n".join([f"{r['name']} +{r['change']}%" for r in results[:5]])
-        send_line(f"📈 今日強勢股\n{msg}")
-
-    return results
+    return sorted(results, key=lambda x: x['change'], reverse=True)
 
 
-# ===== 網頁 =====
-@app.route('/')
+# ===== 指數 =====
+def get_index():
+    try:
+        twii = yf.Ticker("^TWII").fast_info['last_price']
+        otc = yf.Ticker("^TWOII").fast_info['last_price']
+        return round(twii, 0), round(otc, 2)
+    except:
+        return "-", "-"
+
+
+# ===== 追蹤 =====
+def load_track():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+
+def save_track(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def calc_stats(tracks):
+    win = 0
+    total = 0
+    total_return = 0
+
+    for t in tracks:
+        if t['pnl'] != "-":
+            total += 1
+            total_return += t['pnl']
+            if t['pnl'] > 0:
+                win += 1
+
+    winrate = round(win / total * 100, 2) if total > 0 else 0
+    avg = round(total_return / total, 2) if total > 0 else 0
+
+    return winrate, avg
+
+
+@app.route("/")
 def index():
     recs = []
-
-    if request.args.get('scan') == 'true':
+    if request.args.get("scan") == "true":
         recs = scan_market()
 
-    return render_template("index.html", recs=recs)
+    twii, otc = get_index()
+    tracks = load_track()
+
+    for t in tracks:
+        try:
+            curr = yf.Ticker(t['symbol']).fast_info['last_price']
+            pnl = (curr - t['price']) / t['price'] * 100
+
+            t['curr'] = round(curr, 2)
+            t['pnl'] = round(pnl, 2)
+
+            # 🎯 進出場策略
+            if pnl <= -3:
+                t['signal'] = "停損"
+            elif pnl >= 15:
+                t['signal'] = "停利"
+            else:
+                t['signal'] = "持有"
+
+        except:
+            t['curr'] = "-"
+            t['pnl'] = "-"
+            t['signal'] = "-"
+
+    winrate, avg = calc_stats(tracks)
+
+    return render_template("index.html",
+                           recs=recs,
+                           twii=twii,
+                           otc=otc,
+                           tracks=tracks,
+                           now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                           winrate=winrate,
+                           avg=avg)
 
 
-# ===== 啟動 =====
+@app.route("/track/<symbol>/<name>/<price>")
+def track(symbol, name, price):
+    data = load_track()
+
+    data.append({
+        "symbol": symbol,
+        "name": name,
+        "price": float(price),
+        "date": datetime.now().strftime("%Y-%m-%d")
+    })
+
+    save_track(data)
+    return redirect(url_for("index"))
+
+
+@app.route("/untrack/<symbol>")
+def untrack(symbol):
+    data = [x for x in load_track() if x['symbol'] != symbol]
+    save_track(data)
+    return redirect(url_for("index"))
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
