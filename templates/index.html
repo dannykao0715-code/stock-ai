@@ -2,78 +2,193 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>AI 選股</title>
+<title>AI 選股系統</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
 <script>
 setInterval(function(){
     location.reload();
-}, 300000); // 5分鐘自動刷新
+}, 300000);
 </script>
 
+<style>
+body {
+    background: #0d1117;
+    color: #ffffff;
+}
+
+.card {
+    border: 1px solid #30363d;
+    border-radius: 14px;
+}
+
+.score {
+    font-size: 28px;
+    font-weight: bold;
+    color: #ffd700;
+}
+
+.good {
+    color: #2ecc71;
+}
+
+.bad {
+    color: #ff6b6b;
+}
+
+.warning {
+    color: #f1c40f;
+}
+</style>
 </head>
 
-<body style="background:#0d1117;color:#fff;">
+<body>
 
 <div class="container py-4">
 
 <h2>📊 AI 短線 + 波段選股系統</h2>
 
-<div>🕒 {{ now }}</div>
-<div>📈 加權: {{ twii }} | OTC: {{ otc }}</div>
+<div class="mt-2">🕒 更新時間：{{ now }}</div>
+<div>📈 加權指數：{{ twii }} ｜ OTC：{{ otc }}</div>
+<div>🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }}</div>
 
 <a href="/?scan=true" class="btn btn-success my-3">開始掃描</a>
 
 <hr>
 
 <h4>📊 策略績效</h4>
-<div>勝率: {{ winrate }}%</div>
-<div>平均報酬: {{ avg }}%</div>
+
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="card bg-dark p-3">
+            <div>勝率</div>
+            <div class="score">{{ winrate }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card bg-dark p-3">
+            <div>平均報酬</div>
+            <div class="score">{{ avg }}%</div>
+        </div>
+    </div>
+</div>
 
 <hr>
 
-<h4>🔍 選股</h4>
+<h4>🔍 AI 選股結果</h4>
 
 {% if recs %}
 <div class="row">
 {% for r in recs %}
 <div class="col-md-4 mb-3">
-<div class="card bg-dark p-3">
-<b>{{ r.name }}</b>
-<div>{{ r.symbol }}</div>
-<div>${{ r.price }}</div>
-<div>+{{ r.change }}%</div>
+    <div class="card bg-dark p-3 h-100">
 
-{% for s in r.signals %}
-<span class="badge bg-success">{{ s }}</span>
-{% endfor %}
+        <h5>{{ r.name }}</h5>
+        <div>{{ r.symbol }}</div>
 
-<a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-warning mt-2">追蹤</a>
+        <hr>
 
-</div>
+        <div>現價：${{ r.price }}</div>
+        <div>5日漲幅：{{ r.change }}%</div>
+        <div>策略分數：</div>
+        <div class="score">{{ r.score }}</div>
+
+        <div class="mt-2">
+        {% for s in r.signals %}
+            <span class="badge bg-success mb-1">{{ s }}</span>
+        {% endfor %}
+        </div>
+
+        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-warning mt-3">
+            加入追蹤
+        </a>
+
+    </div>
 </div>
 {% endfor %}
 </div>
 {% else %}
-<div>⚠️ 無符合條件股票</div>
+<div class="alert alert-secondary mt-3">
+    尚未掃描，或目前沒有符合條件的股票。
+</div>
 {% endif %}
 
 <hr>
 
-<h4>📉 追蹤（模擬交易）</h4>
+<h4>📉 追蹤清單｜模擬交易</h4>
 
-{% for t in tracks %}
-<div class="mb-2">
-{{ t.name }} |
-成本 {{ t.price }} |
-現價 {{ t.curr }} |
-損益 {{ t.pnl }}% |
-👉 {{ t.signal }}
+{% if tracks %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+    <thead>
+        <tr>
+            <th>股票</th>
+            <th>成本</th>
+            <th>現價</th>
+            <th>損益</th>
+            <th>訊號</th>
+            <th>日期</th>
+            <th>操作</th>
+        </tr>
+    </thead>
 
-<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm">刪除</a>
+    <tbody>
+    {% for t in tracks %}
+        <tr>
+            <td>{{ t.name }}<br>{{ t.symbol }}</td>
+            <td>{{ t.price }}</td>
+            <td>{{ t.curr }}</td>
+
+            <td>
+                {% if t.pnl != "-" and t.pnl > 0 %}
+                    <span class="good">{{ t.pnl }}%</span>
+                {% elif t.pnl != "-" and t.pnl < 0 %}
+                    <span class="bad">{{ t.pnl }}%</span>
+                {% else %}
+                    {{ t.pnl }}
+                {% endif %}
+            </td>
+
+            <td>
+                {% if t.signal == "停損" %}
+                    <span class="bad">{{ t.signal }}</span>
+                {% elif t.signal == "強制停利" or t.signal == "可分批停利" %}
+                    <span class="good">{{ t.signal }}</span>
+                {% elif t.signal == "警戒" %}
+                    <span class="warning">{{ t.signal }}</span>
+                {% else %}
+                    {{ t.signal }}
+                {% endif %}
+            </td>
+
+            <td>{{ t.date }}</td>
+
+            <td>
+                <a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm">
+                    刪除
+                </a>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
 </div>
-{% endfor %}
+{% else %}
+<div class="alert alert-secondary">
+    目前沒有追蹤股票。
+</div>
+{% endif %}
+
+<hr>
+
+<div class="text-secondary small">
+    ⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。實際投資請自行評估風險。
+</div>
 
 </div>
+
 </body>
 </html>
