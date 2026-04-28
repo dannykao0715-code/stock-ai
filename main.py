@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import threading
 import pandas as pd
 import yfinance as yf
 
@@ -16,8 +17,10 @@ TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 RESULT_FILE = "scan_results.json"
 TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
+SCAN_STATUS_FILE = "scan_status.json"
 
 MIN_SCORE = 70
+is_scanning = False
 
 
 # ======================
@@ -28,11 +31,39 @@ def taiwan_now():
 
 
 # ======================
-# 保底股票池：各產業龍頭 + 子公司 + 關係產業
+# 掃描狀態
+# ======================
+def save_scan_status(status, message):
+    data = {
+        "status": status,
+        "message": message,
+        "updated_at": taiwan_now()
+    }
+
+    with open(SCAN_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_scan_status():
+    if os.path.exists(SCAN_STATUS_FILE):
+        try:
+            with open(SCAN_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "status": "idle",
+        "message": "尚未掃描",
+        "updated_at": "-"
+    }
+
+
+# ======================
+# 保底股票池：產業龍頭 + 子公司 + 關係產業
 # ======================
 def get_fallback_stock_pool():
     return {
-        # 半導體 / IC / 晶圓代工
         "2330.TW": "台積電",
         "2303.TW": "聯電",
         "5347.TWO": "世界",
@@ -46,18 +77,14 @@ def get_fallback_stock_pool():
         "4966.TWO": "譜瑞-KY",
         "5274.TWO": "信驊",
 
-        # 封測 / 半導體材料
         "3711.TW": "日月光投控",
-        "2325.TW": "矽品",
         "6147.TWO": "頎邦",
         "2449.TW": "京元電子",
         "2337.TW": "旺宏",
         "2408.TW": "南亞科",
         "6488.TWO": "環球晶",
         "5483.TWO": "中美晶",
-        "4763.TW": "材料-KY",
 
-        # AI 伺服器 / 電子代工 / 散熱
         "2317.TW": "鴻海",
         "2382.TW": "廣達",
         "3231.TW": "緯創",
@@ -72,7 +99,6 @@ def get_fallback_stock_pool():
         "8996.TWO": "高力",
         "2345.TW": "智邦",
 
-        # 光學 / 消費電子
         "3008.TW": "大立光",
         "3406.TW": "玉晶光",
         "2383.TW": "台光電",
@@ -80,12 +106,10 @@ def get_fallback_stock_pool():
         "8046.TW": "南電",
         "3189.TWO": "景碩",
 
-        # 面板 / 顯示器
         "2409.TW": "友達",
         "3481.TW": "群創",
         "8069.TWO": "元太",
 
-        # 金融
         "2881.TW": "富邦金",
         "2882.TW": "國泰金",
         "2886.TW": "兆豐金",
@@ -95,7 +119,6 @@ def get_fallback_stock_pool():
         "5880.TW": "合庫金",
         "5871.TW": "中租-KY",
 
-        # 傳產 / 塑化 / 鋼鐵
         "1301.TW": "台塑",
         "1303.TW": "南亞",
         "1326.TW": "台化",
@@ -104,7 +127,6 @@ def get_fallback_stock_pool():
         "2027.TW": "大成鋼",
         "1605.TW": "華新",
 
-        # 航運 / 航空
         "2603.TW": "長榮",
         "2609.TW": "陽明",
         "2615.TW": "萬海",
@@ -112,31 +134,24 @@ def get_fallback_stock_pool():
         "2610.TW": "華航",
         "2606.TW": "裕民",
 
-        # 生技 / 醫療
         "6446.TW": "藥華藥",
         "1760.TW": "寶齡富錦",
         "4743.TWO": "合一",
-        "6547.TWO": "高端疫苗",
         "4105.TWO": "東洋",
         "6472.TW": "保瑞",
 
-        # 電信 / 內需
         "2412.TW": "中華電",
         "3045.TW": "台灣大",
         "4904.TW": "遠傳",
         "1216.TW": "統一",
         "2912.TW": "統一超",
         "2207.TW": "和泰車",
-        "2227.TW": "裕日車",
 
-        # 綠能 / 電力 / 重電
         "1504.TW": "東元",
         "1513.TW": "中興電",
         "1519.TW": "華城",
         "1609.TW": "大亞",
-        "1618.TW": "合機",
 
-        # 上櫃強勢代表
         "8299.TWO": "群聯",
         "3105.TWO": "穩懋",
         "6187.TWO": "萬潤",
@@ -177,14 +192,10 @@ def load_stock_pool_cache():
     return None
 
 
-# ======================
-# 股票池：上市 + 上櫃 + 快取 + 保底
-# ======================
 def get_stock_pool():
     market = {}
 
     try:
-        # 上市股票
         tse = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2")[0]
         tse = tse[tse[0].astype(str).str.contains(r"^\d{4}", na=False)]
 
@@ -199,7 +210,6 @@ def get_stock_pool():
             except Exception:
                 continue
 
-        # 上櫃股票
         otc = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4")[0]
         otc = otc[otc[0].astype(str).str.contains(r"^\d{4}", na=False)]
 
@@ -219,7 +229,6 @@ def get_stock_pool():
             print("全市場股票池更新成功，共", len(market), "檔")
             return market
 
-        print("股票池抓取數量異常，改用快取")
         cache = load_stock_pool_cache()
         if cache:
             return cache
@@ -357,7 +366,6 @@ def analyze_stock(df):
 
     change_5d = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5] * 100
     change_20d = (close.iloc[-1] - close.iloc[-20]) / close.iloc[-20] * 100
-    change_60d = (close.iloc[-1] - close.iloc[-60]) / close.iloc[-60] * 100
 
     high_20 = high.rolling(20).max().iloc[-2]
     high_60 = high.rolling(60).max().iloc[-2]
@@ -413,10 +421,6 @@ def analyze_stock(df):
         signals.append("波段轉強")
         score += 15
 
-    if change_60d > 10:
-        signals.append("中期趨勢轉強")
-        score += 10
-
     position_from_low = (price - low_60) / low_60 * 100
 
     if 5 <= position_from_low <= 35:
@@ -436,6 +440,7 @@ def analyze_stock(df):
         score -= 25
 
     atr_pct = 0
+
     if atr_now and price:
         atr_pct = atr_now / price * 100
 
@@ -467,9 +472,37 @@ def analyze_stock(df):
 
 
 # ======================
+# 掃描結果
+# ======================
+def save_scan_results(data):
+    with open(RESULT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_scan_results():
+    if os.path.exists(RESULT_FILE):
+        try:
+            with open(RESULT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "updated_at": "尚未掃描",
+        "market_status": "尚未掃描",
+        "market_score": 0,
+        "risk_mode": "-",
+        "stock_pool_count": 0,
+        "count": 0,
+        "results": []
+    }
+
+
+# ======================
 # 全市場掃描
 # ======================
 def scan_market():
+    save_scan_status("running", "正在背景掃描全市場，請稍後重新整理。")
     print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
@@ -508,11 +541,13 @@ def scan_market():
                 })
 
             if i % 100 == 0:
+                save_scan_status("running", f"正在掃描全市場：{i}/{total}")
                 print(f"已掃描 {i}/{total}")
 
             time.sleep(0.05)
 
-        except Exception:
+        except Exception as e:
+            print("單檔掃描失敗：", symbol, e)
             continue
 
     results = sorted(results, key=lambda x: x["score"], reverse=True)
@@ -527,33 +562,8 @@ def scan_market():
         "results": results
     })
 
+    save_scan_status("done", f"掃描完成：股票池 {total} 檔，符合條件 {len(results)} 檔。")
     print("掃描完成：", taiwan_now(), "股票池", total, "檔，符合", len(results), "檔")
-
-    return results
-
-
-# ======================
-# 掃描結果
-# ======================
-def save_scan_results(data):
-    with open(RESULT_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def load_scan_results():
-    if os.path.exists(RESULT_FILE):
-        with open(RESULT_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    return {
-        "updated_at": "尚未掃描",
-        "market_status": "尚未掃描",
-        "market_score": 0,
-        "risk_mode": "-",
-        "stock_pool_count": 0,
-        "count": 0,
-        "results": []
-    }
 
 
 # ======================
@@ -561,8 +571,11 @@ def load_scan_results():
 # ======================
 def load_track():
     if os.path.exists(TRACK_FILE):
-        with open(TRACK_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(TRACK_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
     return []
 
 
@@ -589,7 +602,9 @@ def calc_stats(tracks):
 @app.route("/")
 def index():
     scan_data = load_scan_results()
-    recs = scan_data["results"]
+    scan_status_data = load_scan_status()
+
+    recs = scan_data.get("results", [])
 
     twii, otc = get_index()
     tracks = load_track()
@@ -629,12 +644,15 @@ def index():
         recs=recs,
         twii=twii,
         otc=otc,
-        market_status=scan_data["market_status"],
-        market_score=scan_data["market_score"],
-        risk_mode=scan_data["risk_mode"],
-        scan_updated_at=scan_data["updated_at"],
-        scan_count=scan_data["count"],
+        market_status=scan_data.get("market_status", "尚未掃描"),
+        market_score=scan_data.get("market_score", 0),
+        risk_mode=scan_data.get("risk_mode", "-"),
+        scan_updated_at=scan_data.get("updated_at", "尚未掃描"),
+        scan_count=scan_data.get("count", 0),
         stock_pool_count=scan_data.get("stock_pool_count", 0),
+        scan_status=scan_status_data.get("status", "idle"),
+        scan_message=scan_status_data.get("message", "尚未掃描"),
+        scan_status_time=scan_status_data.get("updated_at", "-"),
         tracks=tracks,
         winrate=winrate,
         avg=avg,
@@ -642,12 +660,35 @@ def index():
     )
 
 
+# ======================
+# 手動背景掃描
+# ======================
 @app.route("/scan-now")
 def scan_now():
-    scan_market()
+    global is_scanning
+
+    if is_scanning:
+        return redirect(url_for("index"))
+
+    def run_scan():
+        global is_scanning
+        try:
+            is_scanning = True
+            scan_market()
+        except Exception as e:
+            save_scan_status("error", f"掃描失敗：{e}")
+            print("掃描失敗：", e)
+        finally:
+            is_scanning = False
+
+    threading.Thread(target=run_scan, daemon=True).start()
+
     return redirect(url_for("index"))
 
 
+# ======================
+# 加入追蹤
+# ======================
 @app.route("/track/<symbol>/<name>/<price>/<stop_loss>/<take1>/<take2>")
 def track(symbol, name, price, stop_loss, take1, take2):
     data = load_track()
@@ -677,12 +718,29 @@ def untrack(symbol):
 
 
 # ======================
-# 每天 16:00 自動掃描
+# 每天 16:00 自動背景掃描
 # ======================
+def scheduled_scan():
+    global is_scanning
+
+    if is_scanning:
+        return
+
+    is_scanning = True
+
+    try:
+        scan_market()
+    except Exception as e:
+        save_scan_status("error", f"排程掃描失敗：{e}")
+        print("排程掃描失敗：", e)
+    finally:
+        is_scanning = False
+
+
 scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
 
 scheduler.add_job(
-    scan_market,
+    scheduled_scan,
     trigger="cron",
     hour=16,
     minute=0,
