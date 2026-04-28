@@ -19,7 +19,7 @@ TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 
-MIN_SCORE = 70
+MIN_SCORE = 85
 is_scanning = False
 
 
@@ -60,7 +60,7 @@ def load_scan_status():
 
 
 # ======================
-# 保底股票池：產業龍頭 + 子公司 + 關係產業
+# 保底股票池
 # ======================
 def get_fallback_stock_pool():
     return {
@@ -183,11 +183,10 @@ def load_stock_pool_cache():
             stocks = data.get("stocks", {})
 
             if stocks and len(stocks) > 100:
-                print("使用快取股票池，共", len(stocks), "檔")
                 return stocks
 
-        except Exception as e:
-            print("讀取股票池快取失敗：", e)
+        except Exception:
+            pass
 
     return None
 
@@ -226,26 +225,22 @@ def get_stock_pool():
 
         if len(market) > 1000:
             save_stock_pool(market)
-            print("全市場股票池更新成功，共", len(market), "檔")
             return market
 
         cache = load_stock_pool_cache()
         if cache:
             return cache
 
-    except Exception as e:
-        print("股票池更新失敗：", e)
-
+    except Exception:
         cache = load_stock_pool_cache()
         if cache:
             return cache
 
-    print("使用產業龍頭保底股票池")
     return get_fallback_stock_pool()
 
 
 # ======================
-# 下載資料
+# 資料下載
 # ======================
 def download_stock(symbol, period="1y"):
     try:
@@ -310,11 +305,11 @@ def get_market_status():
     last = close.iloc[-1]
 
     if last > ma20.iloc[-1] > ma60.iloc[-1] > ma120.iloc[-1]:
-        return "強多市場", 20, "積極"
+        return "強多市場", 25, "積極"
     elif last > ma60.iloc[-1] and ma20.iloc[-1] > ma60.iloc[-1]:
-        return "多頭市場", 10, "正常"
+        return "多頭市場", 15, "正常"
     elif last < ma20.iloc[-1] and ma20.iloc[-1] < ma60.iloc[-1]:
-        return "空頭市場", -30, "防守"
+        return "空頭市場", -35, "防守"
     else:
         return "盤整市場", -5, "保守"
 
@@ -326,7 +321,6 @@ def calc_atr(df, period=14):
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
-
     prev_close = close.shift(1)
 
     tr = pd.concat([
@@ -336,6 +330,78 @@ def calc_atr(df, period=14):
     ], axis=1).max(axis=1)
 
     return tr.rolling(period).mean()
+
+
+# ======================
+# 主力資金分析
+# ======================
+def calc_main_force(df):
+    close = df["Close"]
+    open_ = df["Open"]
+    high = df["High"]
+    low = df["Low"]
+    volume = df["Volume"]
+
+    money = close * volume
+
+    ma_money_5 = money.rolling(5).mean()
+    ma_money_20 = money.rolling(20).mean()
+
+    up_day = close > open_
+    strong_up = (close > open_) & ((close - open_) / open_ * 100 > 2)
+    near_high = ((high - close) / (high - low + 0.0001)) < 0.25
+
+    main_buy_days = ((up_day) & (money > ma_money_20 * 1.3)).tail(10).sum()
+    strong_buy_days = ((strong_up) & (near_high) & (money > ma_money_20 * 1.5)).tail(10).sum()
+
+    money_ratio = safe_float(ma_money_5.iloc[-1] / ma_money_20.iloc[-1])
+    if not money_ratio:
+        money_ratio = 0
+
+    close_5 = close.tail(5)
+    volume_5 = volume.tail(5)
+
+    price_up = close_5.iloc[-1] > close_5.iloc[0]
+    volume_up = volume_5.iloc[-1] > volume_5.mean()
+
+    main_score = 0
+    main_signals = []
+
+    if money_ratio > 1.2:
+        main_score += 15
+        main_signals.append("資金增溫")
+
+    if money_ratio > 1.6:
+        main_score += 25
+        main_signals.append("資金明顯放大")
+
+    if main_buy_days >= 3:
+        main_score += 20
+        main_signals.append("疑似主力連續承接")
+
+    if strong_buy_days >= 2:
+        main_score += 25
+        main_signals.append("強勢買盤進場")
+
+    if price_up and volume_up:
+        main_score += 15
+        main_signals.append("價漲量增")
+
+    if close.iloc[-1] > close.rolling(20).max().iloc[-2] and money.iloc[-1] > ma_money_20.iloc[-1] * 1.5:
+        main_score += 30
+        main_signals.append("帶量突破")
+
+    if close.iloc[-1] < close.iloc[-2] and volume.iloc[-1] > ma_money_20.iloc[-1] / close.iloc[-1] * 1.5:
+        main_score -= 20
+        main_signals.append("高量下跌警訊")
+
+    return {
+        "main_score": round(main_score, 1),
+        "main_signals": main_signals,
+        "money_ratio": round(float(money_ratio), 2),
+        "main_buy_days": int(main_buy_days),
+        "strong_buy_days": int(strong_buy_days)
+    }
 
 
 # ======================
@@ -366,6 +432,7 @@ def analyze_stock(df):
 
     change_5d = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5] * 100
     change_20d = (close.iloc[-1] - close.iloc[-20]) / close.iloc[-20] * 100
+    change_60d = (close.iloc[-1] - close.iloc[-60]) / close.iloc[-60] * 100
 
     high_20 = high.rolling(20).max().iloc[-2]
     high_60 = high.rolling(60).max().iloc[-2]
@@ -389,7 +456,7 @@ def analyze_stock(df):
 
     if ma20.iloc[-1] > ma60.iloc[-1] > ma120.iloc[-1]:
         signals.append("中長期多頭排列")
-        score += 20
+        score += 25
 
     spread = abs(ma20.iloc[-1] - ma60.iloc[-1]) / ma60.iloc[-1]
 
@@ -421,6 +488,10 @@ def analyze_stock(df):
         signals.append("波段轉強")
         score += 15
 
+    if change_60d > 10:
+        signals.append("中期趨勢轉強")
+        score += 10
+
     position_from_low = (price - low_60) / low_60 * 100
 
     if 5 <= position_from_low <= 35:
@@ -448,6 +519,10 @@ def analyze_stock(df):
         warnings.append("波動過大")
         score -= 15
 
+    main_force = calc_main_force(df)
+
+    total_raw_score = score + main_force["main_score"]
+
     stop_loss = None
     take_profit_1 = None
     take_profit_2 = None
@@ -459,7 +534,13 @@ def analyze_stock(df):
 
     return {
         "price": round(price, 2),
-        "score": round(score, 1),
+        "score": round(total_raw_score, 1),
+        "technical_score": round(score, 1),
+        "main_score": main_force["main_score"],
+        "main_signals": main_force["main_signals"],
+        "money_ratio": main_force["money_ratio"],
+        "main_buy_days": main_force["main_buy_days"],
+        "strong_buy_days": main_force["strong_buy_days"],
         "change_5d": round(float(change_5d), 2),
         "change_20d": round(float(change_20d), 2),
         "signals": signals,
@@ -503,7 +584,6 @@ def load_scan_results():
 # ======================
 def scan_market():
     save_scan_status("running", "正在背景掃描全市場，請稍後重新整理。")
-    print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
     market_status, market_score, risk_mode = get_market_status()
@@ -528,6 +608,12 @@ def scan_market():
                     "price": result["price"],
                     "score": round(total_score, 1),
                     "raw_score": result["score"],
+                    "technical_score": result["technical_score"],
+                    "main_score": result["main_score"],
+                    "main_signals": result["main_signals"],
+                    "money_ratio": result["money_ratio"],
+                    "main_buy_days": result["main_buy_days"],
+                    "strong_buy_days": result["strong_buy_days"],
                     "change_5d": result["change_5d"],
                     "change_20d": result["change_20d"],
                     "signals": result["signals"],
@@ -542,12 +628,10 @@ def scan_market():
 
             if i % 100 == 0:
                 save_scan_status("running", f"正在掃描全市場：{i}/{total}")
-                print(f"已掃描 {i}/{total}")
 
             time.sleep(0.05)
 
-        except Exception as e:
-            print("單檔掃描失敗：", symbol, e)
+        except Exception:
             continue
 
     results = sorted(results, key=lambda x: x["score"], reverse=True)
@@ -563,7 +647,6 @@ def scan_market():
     })
 
     save_scan_status("done", f"掃描完成：股票池 {total} 檔，符合條件 {len(results)} 檔。")
-    print("掃描完成：", taiwan_now(), "股票池", total, "檔，符合", len(results), "檔")
 
 
 # ======================
@@ -660,9 +743,6 @@ def index():
     )
 
 
-# ======================
-# 手動背景掃描
-# ======================
 @app.route("/scan-now")
 def scan_now():
     global is_scanning
@@ -677,7 +757,6 @@ def scan_now():
             scan_market()
         except Exception as e:
             save_scan_status("error", f"掃描失敗：{e}")
-            print("掃描失敗：", e)
         finally:
             is_scanning = False
 
@@ -686,9 +765,6 @@ def scan_now():
     return redirect(url_for("index"))
 
 
-# ======================
-# 加入追蹤
-# ======================
 @app.route("/track/<symbol>/<name>/<price>/<stop_loss>/<take1>/<take2>")
 def track(symbol, name, price, stop_loss, take1, take2):
     data = load_track()
@@ -718,7 +794,7 @@ def untrack(symbol):
 
 
 # ======================
-# 每天 16:00 自動背景掃描
+# 每天 16:00 自動掃描
 # ======================
 def scheduled_scan():
     global is_scanning
@@ -732,7 +808,6 @@ def scheduled_scan():
         scan_market()
     except Exception as e:
         save_scan_status("error", f"排程掃描失敗：{e}")
-        print("排程掃描失敗：", e)
     finally:
         is_scanning = False
 
