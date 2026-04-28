@@ -64,6 +64,10 @@ body {
     font-size: 13px;
     color: #a0aec0;
 }
+
+.info-line {
+    line-height: 1.8;
+}
 </style>
 </head>
 
@@ -73,15 +77,20 @@ body {
 
 <h2>📊 法人級 AI 短線 + 波段選股系統</h2>
 
-<div class="mt-2">🕒 網站時間：{{ now }}</div>
-<div>📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
-<div>🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
-<div>📌 最近掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 符合條件：{{ scan_count }} 檔</div>
+<div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
+<div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
+<div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
+<div class="info-line">📌 最近掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 符合條件：{{ scan_count }} 檔</div>
 
 <a href="/scan-now" class="btn btn-success my-3">立即重新掃描</a>
 
+<div class="alert alert-info">
+    掃描狀態：{{ scan_message }}<br>
+    狀態時間：{{ scan_status_time }}
+</div>
+
 <div class="alert alert-warning">
-    系統會每天台灣時間 16:00 自動掃描全市場並儲存結果。平常打開網站會直接顯示最新結果，不需要按掃描。
+    系統會每天台灣時間 16:00 自動背景掃描全市場並儲存結果。平常打開網站會直接顯示最新結果，不需要重新掃描。
 </div>
 
 <hr>
@@ -91,14 +100,14 @@ body {
 <div class="row mb-3">
     <div class="col-md-6 mb-3">
         <div class="card p-3">
-            <div>追蹤勝率</div>
+            <div class="small-text">追蹤勝率</div>
             <div class="score">{{ winrate }}%</div>
         </div>
     </div>
 
     <div class="col-md-6 mb-3">
         <div class="card p-3">
-            <div>平均報酬</div>
+            <div class="small-text">平均報酬</div>
             <div class="score">{{ avg }}%</div>
         </div>
     </div>
@@ -242,7 +251,7 @@ body {
 
 <hr>
 
-<div class="small-text">
+<div class="small-text mb-4">
     ⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。實際投資請自行評估風險。
 </div>
 
