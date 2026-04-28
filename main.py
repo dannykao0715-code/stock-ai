@@ -15,6 +15,7 @@ TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 
 RESULT_FILE = "scan_results.json"
 TRACK_FILE = "track.json"
+STOCK_POOL_FILE = "stock_pool.json"
 
 MIN_SCORE = 70
 
@@ -27,13 +28,163 @@ def taiwan_now():
 
 
 # ======================
-# 股票池：上市 + 上櫃
+# 保底股票池：各產業龍頭 + 子公司 + 關係產業
+# ======================
+def get_fallback_stock_pool():
+    return {
+        # 半導體 / IC / 晶圓代工
+        "2330.TW": "台積電",
+        "2303.TW": "聯電",
+        "5347.TWO": "世界",
+        "6770.TW": "力積電",
+        "2454.TW": "聯發科",
+        "3034.TW": "聯詠",
+        "2379.TW": "瑞昱",
+        "3661.TW": "世芯-KY",
+        "3443.TW": "創意",
+        "3529.TWO": "力旺",
+        "4966.TWO": "譜瑞-KY",
+        "5274.TWO": "信驊",
+
+        # 封測 / 半導體材料
+        "3711.TW": "日月光投控",
+        "2325.TW": "矽品",
+        "6147.TWO": "頎邦",
+        "2449.TW": "京元電子",
+        "2337.TW": "旺宏",
+        "2408.TW": "南亞科",
+        "6488.TWO": "環球晶",
+        "5483.TWO": "中美晶",
+        "4763.TW": "材料-KY",
+
+        # AI 伺服器 / 電子代工 / 散熱
+        "2317.TW": "鴻海",
+        "2382.TW": "廣達",
+        "3231.TW": "緯創",
+        "2356.TW": "英業達",
+        "6669.TW": "緯穎",
+        "2308.TW": "台達電",
+        "2357.TW": "華碩",
+        "2376.TW": "技嘉",
+        "3017.TW": "奇鋐",
+        "3324.TWO": "雙鴻",
+        "3653.TW": "健策",
+        "8996.TWO": "高力",
+        "2345.TW": "智邦",
+
+        # 光學 / 消費電子
+        "3008.TW": "大立光",
+        "3406.TW": "玉晶光",
+        "2383.TW": "台光電",
+        "3037.TW": "欣興",
+        "8046.TW": "南電",
+        "3189.TWO": "景碩",
+
+        # 面板 / 顯示器
+        "2409.TW": "友達",
+        "3481.TW": "群創",
+        "8069.TWO": "元太",
+
+        # 金融
+        "2881.TW": "富邦金",
+        "2882.TW": "國泰金",
+        "2886.TW": "兆豐金",
+        "2891.TW": "中信金",
+        "2884.TW": "玉山金",
+        "2885.TW": "元大金",
+        "5880.TW": "合庫金",
+        "5871.TW": "中租-KY",
+
+        # 傳產 / 塑化 / 鋼鐵
+        "1301.TW": "台塑",
+        "1303.TW": "南亞",
+        "1326.TW": "台化",
+        "6505.TW": "台塑化",
+        "2002.TW": "中鋼",
+        "2027.TW": "大成鋼",
+        "1605.TW": "華新",
+
+        # 航運 / 航空
+        "2603.TW": "長榮",
+        "2609.TW": "陽明",
+        "2615.TW": "萬海",
+        "2618.TW": "長榮航",
+        "2610.TW": "華航",
+        "2606.TW": "裕民",
+
+        # 生技 / 醫療
+        "6446.TW": "藥華藥",
+        "1760.TW": "寶齡富錦",
+        "4743.TWO": "合一",
+        "6547.TWO": "高端疫苗",
+        "4105.TWO": "東洋",
+        "6472.TW": "保瑞",
+
+        # 電信 / 內需
+        "2412.TW": "中華電",
+        "3045.TW": "台灣大",
+        "4904.TW": "遠傳",
+        "1216.TW": "統一",
+        "2912.TW": "統一超",
+        "2207.TW": "和泰車",
+        "2227.TW": "裕日車",
+
+        # 綠能 / 電力 / 重電
+        "1504.TW": "東元",
+        "1513.TW": "中興電",
+        "1519.TW": "華城",
+        "1609.TW": "大亞",
+        "1618.TW": "合機",
+
+        # 上櫃強勢代表
+        "8299.TWO": "群聯",
+        "3105.TWO": "穩懋",
+        "6187.TWO": "萬潤",
+        "3260.TWO": "威剛",
+        "8086.TWO": "宏捷科"
+    }
+
+
+# ======================
+# 股票池快取
+# ======================
+def save_stock_pool(market):
+    data = {
+        "updated_at": taiwan_now(),
+        "count": len(market),
+        "stocks": market
+    }
+
+    with open(STOCK_POOL_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_stock_pool_cache():
+    if os.path.exists(STOCK_POOL_FILE):
+        try:
+            with open(STOCK_POOL_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            stocks = data.get("stocks", {})
+
+            if stocks and len(stocks) > 100:
+                print("使用快取股票池，共", len(stocks), "檔")
+                return stocks
+
+        except Exception as e:
+            print("讀取股票池快取失敗：", e)
+
+    return None
+
+
+# ======================
+# 股票池：上市 + 上櫃 + 快取 + 保底
 # ======================
 def get_stock_pool():
     market = {}
 
     try:
-        # 上市
+        # 上市股票
         tse = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2")[0]
         tse = tse[tse[0].astype(str).str.contains(r"^\d{4}", na=False)]
 
@@ -48,7 +199,7 @@ def get_stock_pool():
             except Exception:
                 continue
 
-        # 上櫃
+        # 上櫃股票
         otc = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4")[0]
         otc = otc[otc[0].astype(str).str.contains(r"^\d{4}", na=False)]
 
@@ -63,16 +214,25 @@ def get_stock_pool():
             except Exception:
                 continue
 
-        return market
+        if len(market) > 1000:
+            save_stock_pool(market)
+            print("全市場股票池更新成功，共", len(market), "檔")
+            return market
 
-    except Exception:
-        return {
-            "2330.TW": "台積電",
-            "2317.TW": "鴻海",
-            "2454.TW": "聯發科",
-            "2308.TW": "台達電",
-            "2382.TW": "廣達"
-        }
+        print("股票池抓取數量異常，改用快取")
+        cache = load_stock_pool_cache()
+        if cache:
+            return cache
+
+    except Exception as e:
+        print("股票池更新失敗：", e)
+
+        cache = load_stock_pool_cache()
+        if cache:
+            return cache
+
+    print("使用產業龍頭保底股票池")
+    return get_fallback_stock_pool()
 
 
 # ======================
@@ -185,7 +345,6 @@ def analyze_stock(df):
     if not price:
         return None
 
-    ma5 = close.rolling(5).mean()
     ma20 = close.rolling(20).mean()
     ma60 = close.rolling(60).mean()
     ma120 = close.rolling(120).mean()
@@ -208,7 +367,6 @@ def analyze_stock(df):
     warnings = []
     score = 0
 
-    # 趨勢
     if price > ma20.iloc[-1]:
         signals.append("站上月線")
         score += 10
@@ -225,14 +383,12 @@ def analyze_stock(df):
         signals.append("中長期多頭排列")
         score += 20
 
-    # 主力吸籌型態
     spread = abs(ma20.iloc[-1] - ma60.iloc[-1]) / ma60.iloc[-1]
 
     if spread < 0.06 and price > ma20.iloc[-1]:
         signals.append("均線收斂後轉強")
         score += 15
 
-    # 突破
     if price > high_20:
         signals.append("突破20日高點")
         score += 20
@@ -241,7 +397,6 @@ def analyze_stock(df):
         signals.append("突破60日高點")
         score += 25
 
-    # 量能
     if vma5.iloc[-1] > vma20.iloc[-1] * 1.2:
         signals.append("量能增溫")
         score += 15
@@ -250,7 +405,6 @@ def analyze_stock(df):
         signals.append("主力放量")
         score += 20
 
-    # 動能
     if 1 <= change_5d <= 12:
         signals.append("短線動能健康")
         score += 15
@@ -263,14 +417,12 @@ def analyze_stock(df):
         signals.append("中期趨勢轉強")
         score += 10
 
-    # 位置
     position_from_low = (price - low_60) / low_60 * 100
 
     if 5 <= position_from_low <= 35:
         signals.append("低位啟動區")
         score += 15
 
-    # 避免追高
     if change_5d > 18:
         warnings.append("5日漲幅過熱")
         score -= 30
@@ -284,7 +436,6 @@ def analyze_stock(df):
         score -= 25
 
     atr_pct = 0
-
     if atr_now and price:
         atr_pct = atr_now / price * 100
 
@@ -319,7 +470,7 @@ def analyze_stock(df):
 # 全市場掃描
 # ======================
 def scan_market():
-    print("開始全市場掃描：", taiwan_now())
+    print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
     market_status, market_score, risk_mode = get_market_status()
@@ -371,17 +522,18 @@ def scan_market():
         "market_status": market_status,
         "market_score": market_score,
         "risk_mode": risk_mode,
+        "stock_pool_count": total,
         "count": len(results),
         "results": results
     })
 
-    print("掃描完成：", taiwan_now(), "共", len(results), "檔")
+    print("掃描完成：", taiwan_now(), "股票池", total, "檔，符合", len(results), "檔")
 
     return results
 
 
 # ======================
-# 掃描結果存取
+# 掃描結果
 # ======================
 def save_scan_results(data):
     with open(RESULT_FILE, "w", encoding="utf-8") as f:
@@ -398,6 +550,7 @@ def load_scan_results():
         "market_status": "尚未掃描",
         "market_score": 0,
         "risk_mode": "-",
+        "stock_pool_count": 0,
         "count": 0,
         "results": []
     }
@@ -431,7 +584,7 @@ def calc_stats(tracks):
 
 
 # ======================
-# 首頁：不用按掃描，直接讀結果
+# 首頁
 # ======================
 @app.route("/")
 def index():
@@ -481,6 +634,7 @@ def index():
         risk_mode=scan_data["risk_mode"],
         scan_updated_at=scan_data["updated_at"],
         scan_count=scan_data["count"],
+        stock_pool_count=scan_data.get("stock_pool_count", 0),
         tracks=tracks,
         winrate=winrate,
         avg=avg,
@@ -488,7 +642,6 @@ def index():
     )
 
 
-# 手動立即掃描
 @app.route("/scan-now")
 def scan_now():
     scan_market()
@@ -524,7 +677,7 @@ def untrack(symbol):
 
 
 # ======================
-# 背景任務：每天 16:00 自動掃描
+# 每天 16:00 自動掃描
 # ======================
 scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
 
