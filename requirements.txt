@@ -1,5 +1,7 @@
-flask==3.0.0
-yfinance==0.2.40
-pandas==2.2.2
-schedule==1.2.1
-requests==2.31.0
+flask
+pandas
+yfinance
+lxml
+html5lib
+gunicorn
+apscheduler
