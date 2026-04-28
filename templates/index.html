@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>AI 選股系統</title>
+<title>法人級 AI 選股系統</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -15,31 +15,54 @@ setInterval(function(){
 
 <style>
 body {
-    background: #0d1117;
+    background: #080d14;
     color: #ffffff;
 }
 
+.container {
+    max-width: 1280px;
+}
+
 .card {
-    border: 1px solid #30363d;
-    border-radius: 14px;
+    background: #111827;
+    border: 1px solid #263241;
+    border-radius: 16px;
 }
 
 .score {
-    font-size: 28px;
-    font-weight: bold;
+    font-size: 34px;
+    font-weight: 800;
     color: #ffd700;
 }
 
 .good {
     color: #2ecc71;
+    font-weight: bold;
 }
 
 .bad {
     color: #ff6b6b;
+    font-weight: bold;
 }
 
 .warning {
     color: #f1c40f;
+    font-weight: bold;
+}
+
+.badge {
+    margin: 2px;
+}
+
+.section-title {
+    margin-top: 28px;
+    margin-bottom: 12px;
+    font-weight: 700;
+}
+
+.small-text {
+    font-size: 13px;
+    color: #a0aec0;
 }
 </style>
 </head>
@@ -48,28 +71,33 @@ body {
 
 <div class="container py-4">
 
-<h2>📊 AI 短線 + 波段選股系統</h2>
+<h2>📊 法人級 AI 短線 + 波段選股系統</h2>
 
-<div class="mt-2">🕒 更新時間：{{ now }}</div>
-<div>📈 加權指數：{{ twii }} ｜ OTC：{{ otc }}</div>
-<div>🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }}</div>
+<div class="mt-2">🕒 網站時間：{{ now }}</div>
+<div>📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
+<div>🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
+<div>📌 最近掃描時間：{{ scan_updated_at }} ｜ 符合條件：{{ scan_count }} 檔</div>
 
-<a href="/?scan=true" class="btn btn-success my-3">開始掃描</a>
+<a href="/scan-now" class="btn btn-success my-3">立即重新掃描</a>
+
+<div class="alert alert-warning">
+    系統會每天台灣時間 16:00 自動掃描全市場並儲存結果。平常打開網站會直接顯示最新結果，不需要按掃描。
+</div>
 
 <hr>
 
-<h4>📊 策略績效</h4>
+<h4 class="section-title">📊 追蹤績效</h4>
 
 <div class="row mb-3">
-    <div class="col-md-6">
-        <div class="card bg-dark p-3">
-            <div>勝率</div>
+    <div class="col-md-6 mb-3">
+        <div class="card p-3">
+            <div>追蹤勝率</div>
             <div class="score">{{ winrate }}%</div>
         </div>
     </div>
 
-    <div class="col-md-6">
-        <div class="card bg-dark p-3">
+    <div class="col-md-6 mb-3">
+        <div class="card p-3">
             <div>平均報酬</div>
             <div class="score">{{ avg }}%</div>
         </div>
@@ -78,31 +106,56 @@ body {
 
 <hr>
 
-<h4>🔍 AI 選股結果</h4>
+<h4 class="section-title">🔍 AI 選股結果</h4>
 
 {% if recs %}
 <div class="row">
 {% for r in recs %}
-<div class="col-md-4 mb-3">
-    <div class="card bg-dark p-3 h-100">
+<div class="col-lg-4 col-md-6 mb-3">
+    <div class="card p-3 h-100">
 
         <h5>{{ r.name }}</h5>
-        <div>{{ r.symbol }}</div>
+        <div class="small-text">{{ r.symbol }}</div>
 
         <hr>
 
-        <div>現價：${{ r.price }}</div>
-        <div>5日漲幅：{{ r.change }}%</div>
-        <div>策略分數：</div>
+        <div>現價：<b>{{ r.price }}</b></div>
+        <div>5日漲幅：{{ r.change_5d }}%</div>
+        <div>20日漲幅：{{ r.change_20d }}%</div>
+        <div>ATR 波動：{{ r.atr_pct }}%</div>
+
+        <div class="mt-2">綜合分數：</div>
         <div class="score">{{ r.score }}</div>
 
-        <div class="mt-2">
-        {% for s in r.signals %}
-            <span class="badge bg-success mb-1">{{ s }}</span>
-        {% endfor %}
+        <div class="small-text">
+            原始分數：{{ r.raw_score }} ｜ {{ r.market_status }} ｜ {{ r.risk_mode }}
         </div>
 
-        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}" class="btn btn-warning mt-3">
+        <hr>
+
+        <div>
+            {% for s in r.signals %}
+                <span class="badge bg-success">{{ s }}</span>
+            {% endfor %}
+        </div>
+
+        {% if r.warnings %}
+        <div class="mt-2">
+            {% for w in r.warnings %}
+                <span class="badge bg-danger">{{ w }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <hr>
+
+        <div class="small-text">建議風控</div>
+        <div>停損：<span class="bad">{{ r.stop_loss }}</span></div>
+        <div>第一停利：<span class="good">{{ r.take_profit_1 }}</span></div>
+        <div>第二停利：<span class="good">{{ r.take_profit_2 }}</span></div>
+
+        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}/{{ r.stop_loss }}/{{ r.take_profit_1 }}/{{ r.take_profit_2 }}"
+           class="btn btn-warning mt-3">
             加入追蹤
         </a>
 
@@ -111,14 +164,14 @@ body {
 {% endfor %}
 </div>
 {% else %}
-<div class="alert alert-secondary mt-3">
-    尚未掃描，或目前沒有符合條件的股票。
+<div class="alert alert-secondary">
+    目前尚未有掃描結果。請先按「立即重新掃描」，之後系統每天 16:00 會自動更新。
 </div>
 {% endif %}
 
 <hr>
 
-<h4>📉 追蹤清單｜模擬交易</h4>
+<h4 class="section-title">📉 追蹤清單｜模擬交易</h4>
 
 {% if tracks %}
 <div class="table-responsive">
@@ -129,6 +182,9 @@ body {
             <th>成本</th>
             <th>現價</th>
             <th>損益</th>
+            <th>停損</th>
+            <th>第一停利</th>
+            <th>第二停利</th>
             <th>訊號</th>
             <th>日期</th>
             <th>操作</th>
@@ -138,7 +194,7 @@ body {
     <tbody>
     {% for t in tracks %}
         <tr>
-            <td>{{ t.name }}<br>{{ t.symbol }}</td>
+            <td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
             <td>{{ t.price }}</td>
             <td>{{ t.curr }}</td>
 
@@ -152,13 +208,15 @@ body {
                 {% endif %}
             </td>
 
+            <td class="bad">{{ t.stop_loss }}</td>
+            <td class="good">{{ t.take_profit_1 }}</td>
+            <td class="good">{{ t.take_profit_2 }}</td>
+
             <td>
-                {% if t.signal == "停損" %}
+                {% if t.signal == "停損" or t.signal == "風險警戒" %}
                     <span class="bad">{{ t.signal }}</span>
-                {% elif t.signal == "強制停利" or t.signal == "可分批停利" %}
+                {% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" %}
                     <span class="good">{{ t.signal }}</span>
-                {% elif t.signal == "警戒" %}
-                    <span class="warning">{{ t.signal }}</span>
                 {% else %}
                     {{ t.signal }}
                 {% endif %}
@@ -184,7 +242,7 @@ body {
 
 <hr>
 
-<div class="text-secondary small">
+<div class="small-text">
     ⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。實際投資請自行評估風險。
 </div>
 
