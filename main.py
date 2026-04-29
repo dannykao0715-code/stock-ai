@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 
 from flask import Flask, render_template, redirect, url_for
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -19,8 +19,8 @@ RESULT_FILE = "scan_results.json"
 TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
+INST_FILE = "institutional_cache.json"
 
-# 顯示數量設定
 MAX_S_RESULTS = 10
 MAX_A_RESULTS = 10
 MAX_B_RESULTS = 10
@@ -34,6 +34,10 @@ is_scanning = False
 # ======================
 def taiwan_now():
     return datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def today_str():
+    return datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
 
 
 # ======================
@@ -69,102 +73,110 @@ def load_scan_status():
 # 保底股票池
 # ======================
 def get_fallback_stock_pool():
+    base = {
+        "2330.TW": ("台積電", "半導體"),
+        "2303.TW": ("聯電", "半導體"),
+        "5347.TWO": ("世界", "半導體"),
+        "6770.TW": ("力積電", "半導體"),
+        "2454.TW": ("聯發科", "IC設計"),
+        "3034.TW": ("聯詠", "IC設計"),
+        "2379.TW": ("瑞昱", "IC設計"),
+        "3661.TW": ("世芯-KY", "IC設計"),
+        "3443.TW": ("創意", "IC設計"),
+        "3529.TWO": ("力旺", "IC設計"),
+        "4966.TWO": ("譜瑞-KY", "IC設計"),
+        "5274.TWO": ("信驊", "IC設計"),
+
+        "3711.TW": ("日月光投控", "封測"),
+        "6147.TWO": ("頎邦", "封測"),
+        "2449.TW": ("京元電子", "封測"),
+        "2337.TW": ("旺宏", "記憶體"),
+        "2408.TW": ("南亞科", "記憶體"),
+        "6488.TWO": ("環球晶", "半導體材料"),
+        "5483.TWO": ("中美晶", "半導體材料"),
+        "4763.TW": ("材料-KY", "半導體材料"),
+
+        "2317.TW": ("鴻海", "AI伺服器"),
+        "2382.TW": ("廣達", "AI伺服器"),
+        "3231.TW": ("緯創", "AI伺服器"),
+        "2356.TW": ("英業達", "AI伺服器"),
+        "6669.TW": ("緯穎", "AI伺服器"),
+        "2308.TW": ("台達電", "電源"),
+        "2357.TW": ("華碩", "電腦"),
+        "2376.TW": ("技嘉", "電腦"),
+        "3017.TW": ("奇鋐", "散熱"),
+        "3324.TWO": ("雙鴻", "散熱"),
+        "3653.TW": ("健策", "散熱"),
+        "8996.TWO": ("高力", "散熱"),
+        "2345.TW": ("智邦", "網通"),
+
+        "3008.TW": ("大立光", "光學"),
+        "3406.TW": ("玉晶光", "光學"),
+        "2383.TW": ("台光電", "PCB"),
+        "3037.TW": ("欣興", "PCB"),
+        "8046.TW": ("南電", "PCB"),
+        "3189.TWO": ("景碩", "PCB"),
+
+        "2409.TW": ("友達", "面板"),
+        "3481.TW": ("群創", "面板"),
+        "8069.TWO": ("元太", "電子紙"),
+
+        "2881.TW": ("富邦金", "金融"),
+        "2882.TW": ("國泰金", "金融"),
+        "2886.TW": ("兆豐金", "金融"),
+        "2891.TW": ("中信金", "金融"),
+        "2884.TW": ("玉山金", "金融"),
+        "2885.TW": ("元大金", "金融"),
+        "5880.TW": ("合庫金", "金融"),
+        "5871.TW": ("中租-KY", "金融"),
+
+        "1301.TW": ("台塑", "塑化"),
+        "1303.TW": ("南亞", "塑化"),
+        "1326.TW": ("台化", "塑化"),
+        "6505.TW": ("台塑化", "塑化"),
+        "2002.TW": ("中鋼", "鋼鐵"),
+        "2027.TW": ("大成鋼", "鋼鐵"),
+        "1605.TW": ("華新", "電線電纜"),
+
+        "2603.TW": ("長榮", "航運"),
+        "2609.TW": ("陽明", "航運"),
+        "2615.TW": ("萬海", "航運"),
+        "2618.TW": ("長榮航", "航空"),
+        "2610.TW": ("華航", "航空"),
+        "2606.TW": ("裕民", "航運"),
+
+        "6446.TW": ("藥華藥", "生技"),
+        "1760.TW": ("寶齡富錦", "生技"),
+        "4743.TWO": ("合一", "生技"),
+        "4105.TWO": ("東洋", "生技"),
+        "6472.TW": ("保瑞", "生技"),
+
+        "2412.TW": ("中華電", "電信"),
+        "3045.TW": ("台灣大", "電信"),
+        "4904.TW": ("遠傳", "電信"),
+        "1216.TW": ("統一", "食品"),
+        "2912.TW": ("統一超", "通路"),
+        "2207.TW": ("和泰車", "汽車"),
+
+        "1504.TW": ("東元", "重電"),
+        "1513.TW": ("中興電", "重電"),
+        "1519.TW": ("華城", "重電"),
+        "1609.TW": ("大亞", "電線電纜"),
+        "1618.TW": ("合機", "電線電纜"),
+
+        "8299.TWO": ("群聯", "記憶體"),
+        "3105.TWO": ("穩懋", "砷化鎵"),
+        "6187.TWO": ("萬潤", "設備"),
+        "3260.TWO": ("威剛", "記憶體"),
+        "8086.TWO": ("宏捷科", "砷化鎵")
+    }
+
     return {
-        "2330.TW": "台積電",
-        "2303.TW": "聯電",
-        "5347.TWO": "世界",
-        "6770.TW": "力積電",
-        "2454.TW": "聯發科",
-        "3034.TW": "聯詠",
-        "2379.TW": "瑞昱",
-        "3661.TW": "世芯-KY",
-        "3443.TW": "創意",
-        "3529.TWO": "力旺",
-        "4966.TWO": "譜瑞-KY",
-        "5274.TWO": "信驊",
-
-        "3711.TW": "日月光投控",
-        "6147.TWO": "頎邦",
-        "2449.TW": "京元電子",
-        "2337.TW": "旺宏",
-        "2408.TW": "南亞科",
-        "6488.TWO": "環球晶",
-        "5483.TWO": "中美晶",
-        "4763.TW": "材料-KY",
-
-        "2317.TW": "鴻海",
-        "2382.TW": "廣達",
-        "3231.TW": "緯創",
-        "2356.TW": "英業達",
-        "6669.TW": "緯穎",
-        "2308.TW": "台達電",
-        "2357.TW": "華碩",
-        "2376.TW": "技嘉",
-        "3017.TW": "奇鋐",
-        "3324.TWO": "雙鴻",
-        "3653.TW": "健策",
-        "8996.TWO": "高力",
-        "2345.TW": "智邦",
-
-        "3008.TW": "大立光",
-        "3406.TW": "玉晶光",
-        "2383.TW": "台光電",
-        "3037.TW": "欣興",
-        "8046.TW": "南電",
-        "3189.TWO": "景碩",
-
-        "2409.TW": "友達",
-        "3481.TW": "群創",
-        "8069.TWO": "元太",
-
-        "2881.TW": "富邦金",
-        "2882.TW": "國泰金",
-        "2886.TW": "兆豐金",
-        "2891.TW": "中信金",
-        "2884.TW": "玉山金",
-        "2885.TW": "元大金",
-        "5880.TW": "合庫金",
-        "5871.TW": "中租-KY",
-
-        "1301.TW": "台塑",
-        "1303.TW": "南亞",
-        "1326.TW": "台化",
-        "6505.TW": "台塑化",
-        "2002.TW": "中鋼",
-        "2027.TW": "大成鋼",
-        "1605.TW": "華新",
-
-        "2603.TW": "長榮",
-        "2609.TW": "陽明",
-        "2615.TW": "萬海",
-        "2618.TW": "長榮航",
-        "2610.TW": "華航",
-        "2606.TW": "裕民",
-
-        "6446.TW": "藥華藥",
-        "1760.TW": "寶齡富錦",
-        "4743.TWO": "合一",
-        "4105.TWO": "東洋",
-        "6472.TW": "保瑞",
-
-        "2412.TW": "中華電",
-        "3045.TW": "台灣大",
-        "4904.TW": "遠傳",
-        "1216.TW": "統一",
-        "2912.TW": "統一超",
-        "2207.TW": "和泰車",
-
-        "1504.TW": "東元",
-        "1513.TW": "中興電",
-        "1519.TW": "華城",
-        "1609.TW": "大亞",
-        "1618.TW": "合機",
-
-        "8299.TWO": "群聯",
-        "3105.TWO": "穩懋",
-        "6187.TWO": "萬潤",
-        "3260.TWO": "威剛",
-        "8086.TWO": "宏捷科"
+        symbol: {
+            "name": name,
+            "industry": industry
+        }
+        for symbol, (name, industry) in base.items()
     }
 
 
@@ -203,6 +215,20 @@ def load_stock_pool_cache():
 # ======================
 # 股票池來源
 # ======================
+def normalize_stock_item(code, name, industry="其他", suffix=".TW"):
+    code = str(code).strip()
+    name = str(name).strip()
+    industry = str(industry).strip() if industry else "其他"
+
+    if len(code) == 4 and code.isdigit() and name:
+        return f"{code}{suffix}", {
+            "name": name,
+            "industry": industry
+        }
+
+    return None, None
+
+
 def fetch_twse_openapi_stock_pool():
     market = {}
 
@@ -215,11 +241,13 @@ def fetch_twse_openapi_stock_pool():
         data = res.json()
 
         for item in data:
-            code = str(item.get("公司代號", "")).strip()
-            name = str(item.get("公司簡稱", "")).strip()
+            code = item.get("公司代號", "")
+            name = item.get("公司簡稱", "") or item.get("公司名稱", "")
+            industry = item.get("產業別", "上市")
 
-            if len(code) == 4 and code.isdigit() and name:
-                market[f"{code}.TW"] = name
+            symbol, info = normalize_stock_item(code, name, industry, ".TW")
+            if symbol:
+                market[symbol] = info
 
         print("TWSE OpenAPI 上市股票：", len(market))
         return market
@@ -229,32 +257,57 @@ def fetch_twse_openapi_stock_pool():
         return {}
 
 
-def fetch_otc_isin_stock_pool():
+def fetch_tpex_openapi_stock_pool():
     market = {}
 
-    try:
-        url = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
-        tables = pd.read_html(url, encoding="big5")
-        df = tables[0]
-        df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
+    urls = [
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_company",
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+    ]
 
-        for item in df[0]:
-            try:
-                parts = str(item).split()
-                code = parts[0]
-                name = parts[1]
+    for url in urls:
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            res = requests.get(url, headers=headers, timeout=20)
+            res.raise_for_status()
+            data = res.json()
 
-                if len(code) == 4 and code.isdigit():
-                    market[f"{code}.TWO"] = name
-            except Exception:
-                continue
+            for item in data:
+                code = (
+                    item.get("公司代號") or
+                    item.get("股票代號") or
+                    item.get("SecuritiesCompanyCode") or
+                    item.get("CompanyCode") or
+                    ""
+                )
 
-        print("ISIN 上櫃股票：", len(market))
-        return market
+                name = (
+                    item.get("公司簡稱") or
+                    item.get("公司名稱") or
+                    item.get("股票名稱") or
+                    item.get("CompanyName") or
+                    ""
+                )
 
-    except Exception as e:
-        print("上櫃股票抓取失敗：", e)
-        return {}
+                industry = (
+                    item.get("產業別") or
+                    item.get("IndustryCode") or
+                    item.get("Industry") or
+                    "上櫃"
+                )
+
+                symbol, info = normalize_stock_item(code, name, industry, ".TWO")
+                if symbol:
+                    market[symbol] = info
+
+            if len(market) > 100:
+                print("TPEx OpenAPI 上櫃股票：", len(market))
+                return market
+
+        except Exception as e:
+            print("TPEx OpenAPI 嘗試失敗：", url, e)
+
+    return market
 
 
 def fetch_isin_all_stock_pool():
@@ -262,11 +315,11 @@ def fetch_isin_all_stock_pool():
 
     try:
         sources = [
-            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW"),
-            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO")
+            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW", "上市"),
+            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO", "上櫃")
         ]
 
-        for url, suffix in sources:
+        for url, suffix, industry in sources:
             tables = pd.read_html(url, encoding="big5")
             df = tables[0]
             df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
@@ -277,8 +330,9 @@ def fetch_isin_all_stock_pool():
                     code = parts[0]
                     name = parts[1]
 
-                    if len(code) == 4 and code.isdigit():
-                        market[f"{code}{suffix}"] = name
+                    symbol, info = normalize_stock_item(code, name, industry, suffix)
+                    if symbol:
+                        market[symbol] = info
                 except Exception:
                     continue
 
@@ -296,8 +350,8 @@ def get_stock_pool():
     twse = fetch_twse_openapi_stock_pool()
     market.update(twse)
 
-    otc = fetch_otc_isin_stock_pool()
-    market.update(otc)
+    tpex = fetch_tpex_openapi_stock_pool()
+    market.update(tpex)
 
     if len(market) < 1000:
         print("股票池數量不足，改用 ISIN 全市場補抓")
@@ -394,7 +448,179 @@ def get_market_status():
 
 
 # ======================
-# 指標計算
+# 法人籌碼資料
+# ======================
+def load_institutional_cache():
+    if os.path.exists(INST_FILE):
+        try:
+            with open(INST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if data.get("date") == today_str():
+                return data.get("stocks", {})
+        except Exception:
+            pass
+
+    return None
+
+
+def save_institutional_cache(stocks):
+    data = {
+        "date": today_str(),
+        "updated_at": taiwan_now(),
+        "stocks": stocks
+    }
+
+    with open(INST_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def fetch_institutional_data():
+    """
+    使用 FinMind 公開資料嘗試抓法人買賣超。
+    若外部資料失敗，會回傳空資料，不讓網站壞掉。
+    """
+
+    cache = load_institutional_cache()
+    if cache:
+        return cache
+
+    stocks = {}
+
+    try:
+        end = datetime.now(TAIWAN_TZ).date()
+        start = end - timedelta(days=14)
+
+        url = "https://api.finmindtrade.com/api/v4/data"
+        params = {
+            "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
+            "start_date": start.strftime("%Y-%m-%d"),
+            "end_date": end.strftime("%Y-%m-%d")
+        }
+
+        res = requests.get(url, params=params, timeout=30)
+        res.raise_for_status()
+        data = res.json()
+
+        rows = data.get("data", [])
+        if not rows:
+            save_institutional_cache({})
+            return {}
+
+        for r in rows:
+            stock_id = str(r.get("stock_id", "")).strip()
+            investor = str(r.get("name", "") or r.get("institutional_investors", "")).strip()
+
+            buy = safe_float(r.get("buy", 0)) or 0
+            sell = safe_float(r.get("sell", 0)) or 0
+            net = buy - sell
+
+            if len(stock_id) != 4 or not stock_id.isdigit():
+                continue
+
+            item = stocks.setdefault(stock_id, {
+                "foreign_net": 0,
+                "trust_net": 0,
+                "dealer_net": 0,
+                "total_net": 0,
+                "foreign_days": 0,
+                "trust_days": 0,
+                "dealer_days": 0
+            })
+
+            item["total_net"] += net
+
+            if "Foreign" in investor or "外資" in investor:
+                item["foreign_net"] += net
+                if net > 0:
+                    item["foreign_days"] += 1
+
+            elif "Investment_Trust" in investor or "投信" in investor:
+                item["trust_net"] += net
+                if net > 0:
+                    item["trust_days"] += 1
+
+            elif "Dealer" in investor or "自營" in investor:
+                item["dealer_net"] += net
+                if net > 0:
+                    item["dealer_days"] += 1
+
+        save_institutional_cache(stocks)
+        print("法人資料取得成功：", len(stocks), "檔")
+        return stocks
+
+    except Exception as e:
+        print("法人資料取得失敗：", e)
+        save_institutional_cache({})
+        return {}
+
+
+def calc_institutional_score(symbol, inst_data):
+    code = symbol.split(".")[0]
+    data = inst_data.get(code)
+
+    if not data:
+        return {
+            "inst_score": 0,
+            "inst_signals": ["法人資料暫無"],
+            "foreign_days": 0,
+            "trust_days": 0,
+            "dealer_days": 0,
+            "total_net": 0
+        }
+
+    score = 0
+    signals = []
+
+    foreign_days = data.get("foreign_days", 0)
+    trust_days = data.get("trust_days", 0)
+    dealer_days = data.get("dealer_days", 0)
+
+    foreign_net = data.get("foreign_net", 0)
+    trust_net = data.get("trust_net", 0)
+    dealer_net = data.get("dealer_net", 0)
+    total_net = data.get("total_net", 0)
+
+    if foreign_days >= 3:
+        score += 15
+        signals.append("外資連買")
+
+    if trust_days >= 3:
+        score += 25
+        signals.append("投信連買")
+
+    if dealer_days >= 3:
+        score += 10
+        signals.append("自營商偏多")
+
+    if total_net > 0:
+        score += 15
+        signals.append("三大法人合計買超")
+
+    if foreign_net > 0 and trust_net > 0:
+        score += 15
+        signals.append("外資投信同步買超")
+
+    if trust_net > 0 and trust_days >= 2:
+        score += 10
+        signals.append("投信買盤延續")
+
+    if total_net < 0:
+        score -= 15
+        signals.append("法人合計賣超")
+
+    return {
+        "inst_score": score,
+        "inst_signals": signals,
+        "foreign_days": foreign_days,
+        "trust_days": trust_days,
+        "dealer_days": dealer_days,
+        "total_net": round(total_net, 0)
+    }
+
+
+# ======================
+# 技術與主力資金指標
 # ======================
 def calc_atr(df, period=14):
     high = df["High"]
@@ -492,9 +718,6 @@ def calc_main_force(df):
     }
 
 
-# ======================
-# 核心策略
-# ======================
 def analyze_stock(df):
     if df is None or len(df) < 120:
         return None
@@ -609,8 +832,6 @@ def analyze_stock(df):
 
     main_force = calc_main_force(df)
 
-    raw_score = score + main_force["main_score"]
-
     stop_loss = None
     take_profit_1 = None
     take_profit_2 = None
@@ -622,7 +843,6 @@ def analyze_stock(df):
 
     return {
         "price": round(price, 2),
-        "raw_score": round(raw_score, 1),
         "technical_score": round(score, 1),
         "main_score": main_force["main_score"],
         "main_signals": main_force["main_signals"],
@@ -631,6 +851,7 @@ def analyze_stock(df):
         "strong_buy_days": main_force["strong_buy_days"],
         "change_5d": round(float(change_5d), 2),
         "change_20d": round(float(change_20d), 2),
+        "change_60d": round(float(change_60d), 2),
         "signals": signals,
         "warnings": warnings,
         "stop_loss": stop_loss,
@@ -641,15 +862,173 @@ def analyze_stock(df):
 
 
 # ======================
+# 族群強度
+# ======================
+def infer_sector(symbol, name, industry):
+    if industry and industry not in ["上市", "上櫃", "其他"]:
+        return industry
+
+    name = name or ""
+
+    groups = {
+        "AI伺服器": ["廣達", "緯創", "緯穎", "鴻海", "英業達", "技嘉", "華碩"],
+        "散熱": ["奇鋐", "雙鴻", "健策", "高力"],
+        "PCB": ["台光電", "欣興", "南電", "景碩"],
+        "半導體": ["台積電", "聯電", "世界", "力積電"],
+        "IC設計": ["聯發科", "聯詠", "瑞昱", "創意", "世芯", "力旺", "譜瑞", "信驊"],
+        "金融": ["金", "中租"],
+        "航運": ["長榮", "陽明", "萬海", "裕民"],
+        "航空": ["華航", "長榮航"],
+        "生技": ["藥", "生", "醫", "保瑞", "合一", "東洋"],
+        "重電": ["華城", "中興電", "東元", "大亞", "合機"],
+        "塑化": ["台塑", "南亞", "台化", "台塑化"],
+        "鋼鐵": ["中鋼", "大成鋼"]
+    }
+
+    for sector, keywords in groups.items():
+        for k in keywords:
+            if k in name:
+                return sector
+
+    return "其他"
+
+
+def calc_sector_scores(items):
+    sector_map = {}
+
+    for x in items:
+        sector = x["sector"]
+        sector_map.setdefault(sector, []).append(x)
+
+    sector_scores = {}
+
+    for sector, arr in sector_map.items():
+        if not arr:
+            continue
+
+        avg_5d = sum(x["change_5d"] for x in arr) / len(arr)
+        avg_20d = sum(x["change_20d"] for x in arr) / len(arr)
+        strong_count = len([x for x in arr if x["technical_score"] >= 60])
+        strong_ratio = strong_count / len(arr)
+
+        score = 0
+
+        if avg_5d > 2:
+            score += 10
+        if avg_5d > 5:
+            score += 10
+        if avg_20d > 5:
+            score += 10
+        if avg_20d > 12:
+            score += 10
+        if strong_ratio >= 0.25:
+            score += 10
+        if strong_ratio >= 0.4:
+            score += 15
+
+        sector_scores[sector] = {
+            "sector_score": score,
+            "sector_avg_5d": round(avg_5d, 2),
+            "sector_avg_20d": round(avg_20d, 2),
+            "sector_strong_ratio": round(strong_ratio * 100, 1)
+        }
+
+    return sector_scores
+
+
+# ======================
+# 回測績效
+# ======================
+def quick_backtest(df):
+    if df is None or len(df) < 180:
+        return {
+            "bt_count": 0,
+            "bt_winrate": 0,
+            "bt_avg_return": 0,
+            "bt_expectancy": 0
+        }
+
+    trades = []
+
+    for i in range(120, len(df) - 20, 5):
+        sample = df.iloc[:i].copy()
+        r = analyze_stock(sample)
+
+        if not r:
+            continue
+
+        simple_score = r["technical_score"] + r["main_score"]
+
+        if simple_score < 120:
+            continue
+
+        entry = safe_float(df["Close"].iloc[i])
+        if not entry:
+            continue
+
+        atr = calc_atr(df.iloc[:i])
+        atr_now = safe_float(atr.iloc[-1])
+
+        if not atr_now:
+            continue
+
+        stop = entry - atr_now * 2
+        take = entry + atr_now * 3
+
+        future = df.iloc[i:i + 20]
+        low_min = safe_float(future["Low"].min())
+        high_max = safe_float(future["High"].max())
+        exit_price = safe_float(future["Close"].iloc[-1])
+
+        final_price = exit_price
+
+        if low_min is not None and low_min <= stop:
+            final_price = stop
+        elif high_max is not None and high_max >= take:
+            final_price = take
+
+        pnl = (final_price - entry) / entry * 100
+        trades.append(pnl)
+
+    if not trades:
+        return {
+            "bt_count": 0,
+            "bt_winrate": 0,
+            "bt_avg_return": 0,
+            "bt_expectancy": 0
+        }
+
+    wins = [x for x in trades if x > 0]
+    losses = [x for x in trades if x <= 0]
+
+    winrate = len(wins) / len(trades) * 100
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = abs(sum(losses) / len(losses)) if losses else 0
+
+    expectancy = (winrate / 100 * avg_win) - ((100 - winrate) / 100 * avg_loss)
+
+    return {
+        "bt_count": len(trades),
+        "bt_winrate": round(winrate, 2),
+        "bt_avg_return": round(sum(trades) / len(trades), 2),
+        "bt_expectancy": round(expectancy, 2)
+    }
+
+
+# ======================
 # 分級策略
 # ======================
-def classify_stock(result, total_score):
-    main_score = result["main_score"]
-    money_ratio = result["money_ratio"]
-    change_5d = result["change_5d"]
-    change_20d = result["change_20d"]
-    atr_pct = result["atr_pct"]
-    warnings = result["warnings"]
+def classify_stock(item):
+    total_score = item["score"]
+    main_score = item["main_score"]
+    inst_score = item["inst_score"]
+    sector_score = item["sector_score"]
+    money_ratio = item["money_ratio"]
+    change_5d = item["change_5d"]
+    change_20d = item["change_20d"]
+    atr_pct = item["atr_pct"]
+    warnings = item["warnings"]
+    main_signals = item["main_signals"]
 
     is_overheated = (
         change_5d > 22 or
@@ -657,31 +1036,32 @@ def classify_stock(result, total_score):
         atr_pct > 10 or
         "5日漲幅過熱" in warnings or
         "20日漲幅過熱" in warnings or
-        "高量下跌警訊" in result["main_signals"]
+        "高量下跌警訊" in main_signals
     )
 
     if is_overheated and total_score >= 150:
         return "HOT"
 
     if (
-        total_score >= 180 and
+        total_score >= 210 and
         main_score >= 60 and
-        money_ratio >= 1.3 and
-        result["main_buy_days"] >= 2 and
-        result["strong_buy_days"] >= 1
+        inst_score >= 20 and
+        sector_score >= 20 and
+        money_ratio >= 1.25
     ):
         return "S"
 
     if (
-        total_score >= 150 and
+        total_score >= 170 and
         main_score >= 35 and
+        sector_score >= 10 and
         money_ratio >= 1.1
     ):
         return "A"
 
     if (
-        total_score >= 120 and
-        (main_score >= 20 or money_ratio >= 1.05)
+        total_score >= 135 and
+        (main_score >= 20 or inst_score >= 15 or sector_score >= 15)
     ):
         return "B"
 
@@ -729,60 +1109,67 @@ def scan_market():
     print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
+    inst_data = fetch_institutional_data()
     market_status, market_score, risk_mode = get_market_status()
 
-    s_results = []
-    a_results = []
-    b_results = []
-    hot_results = []
-
+    analyzed = []
     total = len(stocks)
 
-    for i, (symbol, name) in enumerate(stocks.items(), start=1):
+    for i, (symbol, info) in enumerate(stocks.items(), start=1):
         try:
+            name = info.get("name", symbol)
+            industry = info.get("industry", "其他")
+            sector = infer_sector(symbol, name, industry)
+
             df = download_stock(symbol, "1y")
             result = analyze_stock(df)
 
             if not result:
                 continue
 
-            total_score = result["raw_score"] + market_score
-            level = classify_stock(result, total_score)
+            inst = calc_institutional_score(symbol, inst_data)
 
-            if level:
-                item = {
-                    "symbol": symbol,
-                    "name": name,
-                    "price": result["price"],
-                    "score": round(total_score, 1),
-                    "raw_score": result["raw_score"],
-                    "technical_score": result["technical_score"],
-                    "main_score": result["main_score"],
-                    "main_signals": result["main_signals"],
-                    "money_ratio": result["money_ratio"],
-                    "main_buy_days": result["main_buy_days"],
-                    "strong_buy_days": result["strong_buy_days"],
-                    "change_5d": result["change_5d"],
-                    "change_20d": result["change_20d"],
-                    "signals": result["signals"],
-                    "warnings": result["warnings"],
-                    "stop_loss": result["stop_loss"],
-                    "take_profit_1": result["take_profit_1"],
-                    "take_profit_2": result["take_profit_2"],
-                    "atr_pct": result["atr_pct"],
-                    "market_status": market_status,
-                    "risk_mode": risk_mode,
-                    "level": level
-                }
+            item = {
+                "symbol": symbol,
+                "name": name,
+                "industry": industry,
+                "sector": sector,
+                "df": df,
 
-                if level == "S":
-                    s_results.append(item)
-                elif level == "A":
-                    a_results.append(item)
-                elif level == "B":
-                    b_results.append(item)
-                elif level == "HOT":
-                    hot_results.append(item)
+                "price": result["price"],
+                "technical_score": result["technical_score"],
+                "main_score": result["main_score"],
+                "inst_score": inst["inst_score"],
+
+                "main_signals": result["main_signals"],
+                "inst_signals": inst["inst_signals"],
+
+                "money_ratio": result["money_ratio"],
+                "main_buy_days": result["main_buy_days"],
+                "strong_buy_days": result["strong_buy_days"],
+
+                "foreign_days": inst["foreign_days"],
+                "trust_days": inst["trust_days"],
+                "dealer_days": inst["dealer_days"],
+                "total_net": inst["total_net"],
+
+                "change_5d": result["change_5d"],
+                "change_20d": result["change_20d"],
+                "change_60d": result["change_60d"],
+
+                "signals": result["signals"],
+                "warnings": result["warnings"],
+
+                "stop_loss": result["stop_loss"],
+                "take_profit_1": result["take_profit_1"],
+                "take_profit_2": result["take_profit_2"],
+                "atr_pct": result["atr_pct"],
+
+                "market_status": market_status,
+                "risk_mode": risk_mode
+            }
+
+            analyzed.append(item)
 
             if i % 100 == 0:
                 save_scan_status("running", f"正在掃描全市場：{i}/{total}")
@@ -793,6 +1180,58 @@ def scan_market():
         except Exception as e:
             print("單檔掃描失敗：", symbol, e)
             continue
+
+    sector_scores = calc_sector_scores(analyzed)
+
+    s_results = []
+    a_results = []
+    b_results = []
+    hot_results = []
+
+    for item in analyzed:
+        sector_data = sector_scores.get(item["sector"], {
+            "sector_score": 0,
+            "sector_avg_5d": 0,
+            "sector_avg_20d": 0,
+            "sector_strong_ratio": 0
+        })
+
+        item["sector_score"] = sector_data["sector_score"]
+        item["sector_avg_5d"] = sector_data["sector_avg_5d"]
+        item["sector_avg_20d"] = sector_data["sector_avg_20d"]
+        item["sector_strong_ratio"] = sector_data["sector_strong_ratio"]
+
+        item["score"] = round(
+            item["technical_score"] +
+            item["main_score"] +
+            item["inst_score"] +
+            item["sector_score"] +
+            market_score,
+            1
+        )
+
+        level = classify_stock(item)
+
+        if not level:
+            continue
+
+        item["level"] = level
+
+        # 只有顯示名單才做簡易回測，避免掃描太慢
+        bt = quick_backtest(item["df"])
+        item.update(bt)
+
+        # df 不能存進 json
+        item.pop("df", None)
+
+        if level == "S":
+            s_results.append(item)
+        elif level == "A":
+            a_results.append(item)
+        elif level == "B":
+            b_results.append(item)
+        elif level == "HOT":
+            hot_results.append(item)
 
     s_results = sorted(s_results, key=lambda x: x["score"], reverse=True)
     a_results = sorted(a_results, key=lambda x: x["score"], reverse=True)
