@@ -178,7 +178,7 @@ hr {
 <div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
 <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
 <div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
-<div class="info-line">📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 符合條件：{{ scan_count }} 檔</div>
+<div class="info-line">📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 候選：{{ candidate_count }} 檔 ｜ 顯示：{{ scan_count }} 檔</div>
 
 <div class="my-3">
     <a href="/scan-now" class="btn btn-success me-2">立即重新掃描</a>
@@ -191,7 +191,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    系統每天台灣時間 16:00 自動背景掃描。主力資金分數是用「價量金額」推估，不等於真實法人買賣超。
+    系統每天台灣時間 16:00 自動背景掃描。主力資金分數是用「價量金額」推估，不等於真實法人買賣超。系統會從候選股票中只顯示分數最高前 20 檔。
 </div>
 
 <hr>
@@ -360,7 +360,7 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-    目前沒有符合嚴格條件的股票。這是正常的，代表系統沒有亂推薦。
+    目前沒有符合條件的股票。可以重新掃描，或等每日 16:00 自動更新。
 </div>
 {% endif %}
 
