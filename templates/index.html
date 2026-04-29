@@ -154,6 +154,18 @@ hr {
 .btn-warning {
     font-weight: bold;
 }
+
+.btn-refresh {
+    background: #2563eb;
+    color: #ffffff;
+    font-weight: bold;
+    border: none;
+}
+
+.btn-refresh:hover {
+    background: #1d4ed8;
+    color: #ffffff;
+}
 </style>
 </head>
 
@@ -168,7 +180,10 @@ hr {
 <div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
 <div class="info-line">📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 符合條件：{{ scan_count }} 檔</div>
 
-<a href="/scan-now" class="btn btn-success my-3">立即重新掃描</a>
+<div class="my-3">
+    <a href="/scan-now" class="btn btn-success me-2">立即重新掃描</a>
+    <button onclick="location.reload()" class="btn btn-refresh">重新整理</button>
+</div>
 
 <div class="alert alert-info">
     掃描狀態：{{ scan_message }}<br>
@@ -198,6 +213,77 @@ hr {
         </div>
     </div>
 </div>
+
+<hr>
+
+<h4 class="section-title">📉 追蹤清單｜模擬交易</h4>
+
+{% if tracks %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>股票</th>
+<th>成本</th>
+<th>現價</th>
+<th>損益</th>
+<th>停損</th>
+<th>停利1</th>
+<th>停利2</th>
+<th>訊號</th>
+<th>日期</th>
+<th>操作</th>
+</tr>
+</thead>
+
+<tbody>
+{% for t in tracks %}
+<tr>
+<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
+<td>{{ t.price }}</td>
+<td>{{ t.curr }}</td>
+
+<td>
+{% if t.pnl != "-" and t.pnl > 0 %}
+<span class="good">{{ t.pnl }}%</span>
+{% elif t.pnl != "-" and t.pnl < 0 %}
+<span class="bad">{{ t.pnl }}%</span>
+{% else %}
+{{ t.pnl }}
+{% endif %}
+</td>
+
+<td class="bad">{{ t.stop_loss }}</td>
+<td class="good">{{ t.take_profit_1 }}</td>
+<td class="good">{{ t.take_profit_2 }}</td>
+
+<td>
+{% if t.signal == "停損" or t.signal == "風險警戒" %}
+<span class="bad">{{ t.signal }}</span>
+{% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" %}
+<span class="good">{{ t.signal }}</span>
+{% else %}
+{{ t.signal }}
+{% endif %}
+</td>
+
+<td>{{ t.date }}</td>
+
+<td>
+<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm">
+刪除
+</a>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-secondary">
+目前沒有追蹤股票。
+</div>
+{% endif %}
 
 <hr>
 
@@ -274,78 +360,7 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-    目前尚未有掃描結果。請先按「立即重新掃描」，等待背景掃描完成後重新整理。
-</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">📉 追蹤清單｜模擬交易</h4>
-
-{% if tracks %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>成本</th>
-<th>現價</th>
-<th>損益</th>
-<th>停損</th>
-<th>停利1</th>
-<th>停利2</th>
-<th>訊號</th>
-<th>日期</th>
-<th>操作</th>
-</tr>
-</thead>
-
-<tbody>
-{% for t in tracks %}
-<tr>
-<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
-<td>{{ t.price }}</td>
-<td>{{ t.curr }}</td>
-
-<td>
-{% if t.pnl != "-" and t.pnl > 0 %}
-<span class="good">{{ t.pnl }}%</span>
-{% elif t.pnl != "-" and t.pnl < 0 %}
-<span class="bad">{{ t.pnl }}%</span>
-{% else %}
-{{ t.pnl }}
-{% endif %}
-</td>
-
-<td class="bad">{{ t.stop_loss }}</td>
-<td class="good">{{ t.take_profit_1 }}</td>
-<td class="good">{{ t.take_profit_2 }}</td>
-
-<td>
-{% if t.signal == "停損" or t.signal == "風險警戒" %}
-<span class="bad">{{ t.signal }}</span>
-{% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" %}
-<span class="good">{{ t.signal }}</span>
-{% else %}
-{{ t.signal }}
-{% endif %}
-</td>
-
-<td>{{ t.date }}</td>
-
-<td>
-<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm">
-刪除
-</a>
-</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">
-目前沒有追蹤股票。
+    目前沒有符合嚴格條件的股票。這是正常的，代表系統沒有亂推薦。
 </div>
 {% endif %}
 
