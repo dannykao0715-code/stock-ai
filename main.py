@@ -20,9 +20,11 @@ TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 
-# 策略設定
-MIN_SCORE = 150
-MAX_RESULTS = 20
+# 顯示數量設定
+MAX_S_RESULTS = 10
+MAX_A_RESULTS = 10
+MAX_B_RESULTS = 10
+MAX_HOT_RESULTS = 10
 
 is_scanning = False
 
@@ -199,7 +201,7 @@ def load_stock_pool_cache():
 
 
 # ======================
-# 股票池來源 1：TWSE OpenAPI 上市
+# 股票池來源
 # ======================
 def fetch_twse_openapi_stock_pool():
     market = {}
@@ -227,9 +229,6 @@ def fetch_twse_openapi_stock_pool():
         return {}
 
 
-# ======================
-# 股票池來源 2：ISIN 上櫃
-# ======================
 def fetch_otc_isin_stock_pool():
     market = {}
 
@@ -258,9 +257,6 @@ def fetch_otc_isin_stock_pool():
         return {}
 
 
-# ======================
-# 股票池來源 3：ISIN 上市 + 上櫃
-# ======================
 def fetch_isin_all_stock_pool():
     market = {}
 
@@ -294,21 +290,15 @@ def fetch_isin_all_stock_pool():
         return {}
 
 
-# ======================
-# 股票池總控
-# ======================
 def get_stock_pool():
     market = {}
 
-    # 1. 先抓上市 OpenAPI
     twse = fetch_twse_openapi_stock_pool()
     market.update(twse)
 
-    # 2. 再抓上櫃 ISIN
     otc = fetch_otc_isin_stock_pool()
     market.update(otc)
 
-    # 3. 如果數量不足，再用 ISIN 全市場補抓
     if len(market) < 1000:
         print("股票池數量不足，改用 ISIN 全市場補抓")
         isin_all = fetch_isin_all_stock_pool()
@@ -316,19 +306,16 @@ def get_stock_pool():
         if len(isin_all) > len(market):
             market = isin_all
 
-    # 4. 成功抓到全市場，存快取
     if len(market) > 1000:
         save_stock_pool(market)
         print("全市場股票池更新成功，共", len(market), "檔")
         return market
 
-    # 5. 使用快取
     cache = load_stock_pool_cache()
     if cache:
         print("使用快取股票池，共", len(cache), "檔")
         return cache
 
-    # 6. 最後才使用保底股票池
     print("使用產業龍頭保底股票池")
     return get_fallback_stock_pool()
 
@@ -369,7 +356,7 @@ def safe_float(x):
 
 
 # ======================
-# 指數
+# 指數與大盤
 # ======================
 def get_index():
     def fetch(symbol):
@@ -382,9 +369,6 @@ def get_index():
     return fetch("^TWII"), fetch("^TWOII")
 
 
-# ======================
-# 大盤濾網
-# ======================
 def get_market_status():
     df = download_stock("^TWII", "1y")
 
@@ -410,7 +394,7 @@ def get_market_status():
 
 
 # ======================
-# ATR
+# 指標計算
 # ======================
 def calc_atr(df, period=14):
     high = df["High"]
@@ -427,9 +411,6 @@ def calc_atr(df, period=14):
     return tr.rolling(period).mean()
 
 
-# ======================
-# 主力資金分析：價量金額推估
-# ======================
 def calc_main_force(df):
     close = df["Close"]
     open_ = df["Open"]
@@ -549,7 +530,6 @@ def analyze_stock(df):
     warnings = []
     score = 0
 
-    # 技術趨勢
     if price > ma20.iloc[-1]:
         signals.append("站上月線")
         score += 10
@@ -566,14 +546,12 @@ def analyze_stock(df):
         signals.append("中長期多頭排列")
         score += 25
 
-    # 均線收斂
     spread = abs(ma20.iloc[-1] - ma60.iloc[-1]) / ma60.iloc[-1]
 
     if spread < 0.06 and price > ma20.iloc[-1]:
         signals.append("均線收斂後轉強")
         score += 15
 
-    # 突破
     if price > high_20:
         signals.append("突破20日高點")
         score += 20
@@ -582,7 +560,6 @@ def analyze_stock(df):
         signals.append("突破60日高點")
         score += 25
 
-    # 量能
     if vma5.iloc[-1] > vma20.iloc[-1] * 1.2:
         signals.append("量能增溫")
         score += 15
@@ -591,7 +568,6 @@ def analyze_stock(df):
         signals.append("主力放量")
         score += 20
 
-    # 動能
     if 1 <= change_5d <= 15:
         signals.append("短線動能健康")
         score += 15
@@ -604,14 +580,12 @@ def analyze_stock(df):
         signals.append("中期趨勢轉強")
         score += 10
 
-    # 位置
     position_from_low = (price - low_60) / low_60 * 100
 
     if 5 <= position_from_low <= 45:
         signals.append("低中位啟動區")
         score += 15
 
-    # 風險扣分
     if change_5d > 22:
         warnings.append("5日漲幅過熱")
         score -= 30
@@ -635,7 +609,7 @@ def analyze_stock(df):
 
     main_force = calc_main_force(df)
 
-    total_raw_score = score + main_force["main_score"]
+    raw_score = score + main_force["main_score"]
 
     stop_loss = None
     take_profit_1 = None
@@ -648,7 +622,7 @@ def analyze_stock(df):
 
     return {
         "price": round(price, 2),
-        "score": round(total_raw_score, 1),
+        "raw_score": round(raw_score, 1),
         "technical_score": round(score, 1),
         "main_score": main_force["main_score"],
         "main_signals": main_force["main_signals"],
@@ -664,6 +638,54 @@ def analyze_stock(df):
         "take_profit_2": take_profit_2,
         "atr_pct": round(float(atr_pct), 2)
     }
+
+
+# ======================
+# 分級策略
+# ======================
+def classify_stock(result, total_score):
+    main_score = result["main_score"]
+    money_ratio = result["money_ratio"]
+    change_5d = result["change_5d"]
+    change_20d = result["change_20d"]
+    atr_pct = result["atr_pct"]
+    warnings = result["warnings"]
+
+    is_overheated = (
+        change_5d > 22 or
+        change_20d > 45 or
+        atr_pct > 10 or
+        "5日漲幅過熱" in warnings or
+        "20日漲幅過熱" in warnings or
+        "高量下跌警訊" in result["main_signals"]
+    )
+
+    if is_overheated and total_score >= 150:
+        return "HOT"
+
+    if (
+        total_score >= 180 and
+        main_score >= 60 and
+        money_ratio >= 1.3 and
+        result["main_buy_days"] >= 2 and
+        result["strong_buy_days"] >= 1
+    ):
+        return "S"
+
+    if (
+        total_score >= 150 and
+        main_score >= 35 and
+        money_ratio >= 1.1
+    ):
+        return "A"
+
+    if (
+        total_score >= 120 and
+        (main_score >= 20 or money_ratio >= 1.05)
+    ):
+        return "B"
+
+    return None
 
 
 # ======================
@@ -688,9 +710,14 @@ def load_scan_results():
         "market_score": 0,
         "risk_mode": "-",
         "stock_pool_count": 0,
-        "candidate_count": 0,
-        "count": 0,
-        "results": []
+        "s_count": 0,
+        "a_count": 0,
+        "b_count": 0,
+        "hot_count": 0,
+        "s_results": [],
+        "a_results": [],
+        "b_results": [],
+        "hot_results": []
     }
 
 
@@ -704,7 +731,11 @@ def scan_market():
     stocks = get_stock_pool()
     market_status, market_score, risk_mode = get_market_status()
 
-    results = []
+    s_results = []
+    a_results = []
+    b_results = []
+    hot_results = []
+
     total = len(stocks)
 
     for i, (symbol, name) in enumerate(stocks.items(), start=1):
@@ -715,21 +746,16 @@ def scan_market():
             if not result:
                 continue
 
-            total_score = result["score"] + market_score
+            total_score = result["raw_score"] + market_score
+            level = classify_stock(result, total_score)
 
-            is_candidate = (
-                total_score >= MIN_SCORE and
-                result["main_score"] >= 35 and
-                result["money_ratio"] >= 1.1
-            )
-
-            if is_candidate:
-                results.append({
+            if level:
+                item = {
                     "symbol": symbol,
                     "name": name,
                     "price": result["price"],
                     "score": round(total_score, 1),
-                    "raw_score": result["score"],
+                    "raw_score": result["raw_score"],
                     "technical_score": result["technical_score"],
                     "main_score": result["main_score"],
                     "main_signals": result["main_signals"],
@@ -745,8 +771,18 @@ def scan_market():
                     "take_profit_2": result["take_profit_2"],
                     "atr_pct": result["atr_pct"],
                     "market_status": market_status,
-                    "risk_mode": risk_mode
-                })
+                    "risk_mode": risk_mode,
+                    "level": level
+                }
+
+                if level == "S":
+                    s_results.append(item)
+                elif level == "A":
+                    a_results.append(item)
+                elif level == "B":
+                    b_results.append(item)
+                elif level == "HOT":
+                    hot_results.append(item)
 
             if i % 100 == 0:
                 save_scan_status("running", f"正在掃描全市場：{i}/{total}")
@@ -758,28 +794,45 @@ def scan_market():
             print("單檔掃描失敗：", symbol, e)
             continue
 
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
+    s_results = sorted(s_results, key=lambda x: x["score"], reverse=True)
+    a_results = sorted(a_results, key=lambda x: x["score"], reverse=True)
+    b_results = sorted(b_results, key=lambda x: x["score"], reverse=True)
+    hot_results = sorted(hot_results, key=lambda x: x["score"], reverse=True)
 
-    candidate_count = len(results)
-    display_results = results[:MAX_RESULTS]
-
-    save_scan_results({
+    data = {
         "updated_at": taiwan_now(),
         "market_status": market_status,
         "market_score": market_score,
         "risk_mode": risk_mode,
         "stock_pool_count": total,
-        "candidate_count": candidate_count,
-        "count": len(display_results),
-        "results": display_results
-    })
+
+        "s_count": len(s_results),
+        "a_count": len(a_results),
+        "b_count": len(b_results),
+        "hot_count": len(hot_results),
+
+        "s_results": s_results[:MAX_S_RESULTS],
+        "a_results": a_results[:MAX_A_RESULTS],
+        "b_results": b_results[:MAX_B_RESULTS],
+        "hot_results": hot_results[:MAX_HOT_RESULTS]
+    }
+
+    save_scan_results(data)
 
     save_scan_status(
         "done",
-        f"掃描完成：股票池 {total} 檔，候選 {candidate_count} 檔，顯示前 {len(display_results)} 檔。"
+        f"掃描完成：股票池 {total} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔，B級 {len(b_results)} 檔，過熱 {len(hot_results)} 檔。"
     )
 
-    print("掃描完成：", taiwan_now(), "股票池", total, "候選", candidate_count, "顯示", len(display_results))
+    print(
+        "掃描完成：",
+        taiwan_now(),
+        "股票池", total,
+        "S", len(s_results),
+        "A", len(a_results),
+        "B", len(b_results),
+        "HOT", len(hot_results)
+    )
 
 
 # ======================
@@ -820,8 +873,6 @@ def index():
     scan_data = load_scan_results()
     scan_status_data = load_scan_status()
 
-    recs = scan_data.get("results", [])
-
     twii, otc = get_index()
     tracks = load_track()
 
@@ -857,19 +908,28 @@ def index():
 
     return render_template(
         "index.html",
-        recs=recs,
         twii=twii,
         otc=otc,
         market_status=scan_data.get("market_status", "尚未掃描"),
         market_score=scan_data.get("market_score", 0),
         risk_mode=scan_data.get("risk_mode", "-"),
         scan_updated_at=scan_data.get("updated_at", "尚未掃描"),
-        scan_count=scan_data.get("count", 0),
-        candidate_count=scan_data.get("candidate_count", 0),
         stock_pool_count=scan_data.get("stock_pool_count", 0),
+
+        s_count=scan_data.get("s_count", 0),
+        a_count=scan_data.get("a_count", 0),
+        b_count=scan_data.get("b_count", 0),
+        hot_count=scan_data.get("hot_count", 0),
+
+        s_results=scan_data.get("s_results", []),
+        a_results=scan_data.get("a_results", []),
+        b_results=scan_data.get("b_results", []),
+        hot_results=scan_data.get("hot_results", []),
+
         scan_status=scan_status_data.get("status", "idle"),
         scan_message=scan_status_data.get("message", "尚未掃描"),
         scan_status_time=scan_status_data.get("updated_at", "-"),
+
         tracks=tracks,
         winrate=winrate,
         avg=avg,
