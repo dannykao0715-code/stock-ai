@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import requests
 import pandas as pd
 import yfinance as yf
 
@@ -19,8 +20,9 @@ TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 
-# 嚴格版門檻
-MIN_SCORE = 220
+# 策略設定
+MIN_SCORE = 150
+MAX_RESULTS = 20
 
 is_scanning = False
 
@@ -62,11 +64,10 @@ def load_scan_status():
 
 
 # ======================
-# 保底股票池：產業龍頭 + 子公司 + 關係產業
+# 保底股票池
 # ======================
 def get_fallback_stock_pool():
     return {
-        # 半導體 / IC 設計 / 晶圓代工
         "2330.TW": "台積電",
         "2303.TW": "聯電",
         "5347.TWO": "世界",
@@ -80,7 +81,6 @@ def get_fallback_stock_pool():
         "4966.TWO": "譜瑞-KY",
         "5274.TWO": "信驊",
 
-        # 封測 / 記憶體 / 半導體材料
         "3711.TW": "日月光投控",
         "6147.TWO": "頎邦",
         "2449.TW": "京元電子",
@@ -90,7 +90,6 @@ def get_fallback_stock_pool():
         "5483.TWO": "中美晶",
         "4763.TW": "材料-KY",
 
-        # AI 伺服器 / 代工 / 散熱 / 網通
         "2317.TW": "鴻海",
         "2382.TW": "廣達",
         "3231.TW": "緯創",
@@ -105,7 +104,6 @@ def get_fallback_stock_pool():
         "8996.TWO": "高力",
         "2345.TW": "智邦",
 
-        # PCB / 光學 / 消費電子
         "3008.TW": "大立光",
         "3406.TW": "玉晶光",
         "2383.TW": "台光電",
@@ -113,12 +111,10 @@ def get_fallback_stock_pool():
         "8046.TW": "南電",
         "3189.TWO": "景碩",
 
-        # 面板 / 電子紙
         "2409.TW": "友達",
         "3481.TW": "群創",
         "8069.TWO": "元太",
 
-        # 金融
         "2881.TW": "富邦金",
         "2882.TW": "國泰金",
         "2886.TW": "兆豐金",
@@ -128,7 +124,6 @@ def get_fallback_stock_pool():
         "5880.TW": "合庫金",
         "5871.TW": "中租-KY",
 
-        # 塑化 / 鋼鐵 / 傳產
         "1301.TW": "台塑",
         "1303.TW": "南亞",
         "1326.TW": "台化",
@@ -137,7 +132,6 @@ def get_fallback_stock_pool():
         "2027.TW": "大成鋼",
         "1605.TW": "華新",
 
-        # 航運 / 航空
         "2603.TW": "長榮",
         "2609.TW": "陽明",
         "2615.TW": "萬海",
@@ -145,14 +139,12 @@ def get_fallback_stock_pool():
         "2610.TW": "華航",
         "2606.TW": "裕民",
 
-        # 生技 / 醫療
         "6446.TW": "藥華藥",
         "1760.TW": "寶齡富錦",
         "4743.TWO": "合一",
         "4105.TWO": "東洋",
         "6472.TW": "保瑞",
 
-        # 電信 / 內需
         "2412.TW": "中華電",
         "3045.TW": "台灣大",
         "4904.TW": "遠傳",
@@ -160,14 +152,12 @@ def get_fallback_stock_pool():
         "2912.TW": "統一超",
         "2207.TW": "和泰車",
 
-        # 綠能 / 重電 / 電力
         "1504.TW": "東元",
         "1513.TW": "中興電",
         "1519.TW": "華城",
         "1609.TW": "大亞",
         "1618.TW": "合機",
 
-        # 上櫃代表
         "8299.TWO": "群聯",
         "3105.TWO": "穩懋",
         "6187.TWO": "萬潤",
@@ -209,32 +199,47 @@ def load_stock_pool_cache():
 
 
 # ======================
-# 股票池：上市 + 上櫃 + 快取 + 保底
+# 股票池來源 1：TWSE OpenAPI 上市
 # ======================
-def get_stock_pool():
+def fetch_twse_openapi_stock_pool():
     market = {}
 
     try:
-        # 上市
-        tse = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2")[0]
-        tse = tse[tse[0].astype(str).str.contains(r"^\d{4}", na=False)]
+        url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+        headers = {"User-Agent": "Mozilla/5.0"}
 
-        for item in tse[0]:
-            try:
-                parts = str(item).split()
-                code = parts[0]
-                name = parts[1]
+        res = requests.get(url, headers=headers, timeout=20)
+        res.raise_for_status()
+        data = res.json()
 
-                if len(code) == 4 and code.isdigit():
-                    market[f"{code}.TW"] = name
-            except Exception:
-                continue
+        for item in data:
+            code = str(item.get("公司代號", "")).strip()
+            name = str(item.get("公司簡稱", "")).strip()
 
-        # 上櫃
-        otc = pd.read_html("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4")[0]
-        otc = otc[otc[0].astype(str).str.contains(r"^\d{4}", na=False)]
+            if len(code) == 4 and code.isdigit() and name:
+                market[f"{code}.TW"] = name
 
-        for item in otc[0]:
+        print("TWSE OpenAPI 上市股票：", len(market))
+        return market
+
+    except Exception as e:
+        print("TWSE OpenAPI 失敗：", e)
+        return {}
+
+
+# ======================
+# 股票池來源 2：ISIN 上櫃
+# ======================
+def fetch_otc_isin_stock_pool():
+    market = {}
+
+    try:
+        url = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
+        tables = pd.read_html(url, encoding="big5")
+        df = tables[0]
+        df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
+
+        for item in df[0]:
             try:
                 parts = str(item).split()
                 code = parts[0]
@@ -245,23 +250,85 @@ def get_stock_pool():
             except Exception:
                 continue
 
-        if len(market) > 1000:
-            save_stock_pool(market)
-            print("全市場股票池更新成功，共", len(market), "檔")
-            return market
-
-        print("股票池抓取數量異常，改用快取")
-        cache = load_stock_pool_cache()
-        if cache:
-            return cache
+        print("ISIN 上櫃股票：", len(market))
+        return market
 
     except Exception as e:
-        print("股票池更新失敗：", e)
+        print("上櫃股票抓取失敗：", e)
+        return {}
 
-        cache = load_stock_pool_cache()
-        if cache:
-            return cache
 
+# ======================
+# 股票池來源 3：ISIN 上市 + 上櫃
+# ======================
+def fetch_isin_all_stock_pool():
+    market = {}
+
+    try:
+        sources = [
+            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW"),
+            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO")
+        ]
+
+        for url, suffix in sources:
+            tables = pd.read_html(url, encoding="big5")
+            df = tables[0]
+            df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
+
+            for item in df[0]:
+                try:
+                    parts = str(item).split()
+                    code = parts[0]
+                    name = parts[1]
+
+                    if len(code) == 4 and code.isdigit():
+                        market[f"{code}{suffix}"] = name
+                except Exception:
+                    continue
+
+        print("ISIN 全市場股票：", len(market))
+        return market
+
+    except Exception as e:
+        print("ISIN 全市場失敗：", e)
+        return {}
+
+
+# ======================
+# 股票池總控
+# ======================
+def get_stock_pool():
+    market = {}
+
+    # 1. 先抓上市 OpenAPI
+    twse = fetch_twse_openapi_stock_pool()
+    market.update(twse)
+
+    # 2. 再抓上櫃 ISIN
+    otc = fetch_otc_isin_stock_pool()
+    market.update(otc)
+
+    # 3. 如果數量不足，再用 ISIN 全市場補抓
+    if len(market) < 1000:
+        print("股票池數量不足，改用 ISIN 全市場補抓")
+        isin_all = fetch_isin_all_stock_pool()
+
+        if len(isin_all) > len(market):
+            market = isin_all
+
+    # 4. 成功抓到全市場，存快取
+    if len(market) > 1000:
+        save_stock_pool(market)
+        print("全市場股票池更新成功，共", len(market), "檔")
+        return market
+
+    # 5. 使用快取
+    cache = load_stock_pool_cache()
+    if cache:
+        print("使用快取股票池，共", len(cache), "檔")
+        return cache
+
+    # 6. 最後才使用保底股票池
     print("使用產業龍頭保底股票池")
     return get_fallback_stock_pool()
 
@@ -395,6 +462,10 @@ def calc_main_force(df):
     main_score = 0
     main_signals = []
 
+    if money_ratio > 1.1:
+        main_score += 10
+        main_signals.append("資金微幅增溫")
+
     if money_ratio > 1.2:
         main_score += 15
         main_signals.append("資金增溫")
@@ -403,9 +474,17 @@ def calc_main_force(df):
         main_score += 25
         main_signals.append("資金明顯放大")
 
+    if main_buy_days >= 2:
+        main_score += 15
+        main_signals.append("疑似主力承接")
+
     if main_buy_days >= 3:
         main_score += 20
         main_signals.append("疑似主力連續承接")
+
+    if strong_buy_days >= 1:
+        main_score += 15
+        main_signals.append("強勢買盤出現")
 
     if strong_buy_days >= 2:
         main_score += 25
@@ -415,11 +494,10 @@ def calc_main_force(df):
         main_score += 15
         main_signals.append("價漲量增")
 
-    if close.iloc[-1] > close.rolling(20).max().iloc[-2] and money.iloc[-1] > ma_money_20.iloc[-1] * 1.5:
-        main_score += 30
+    if close.iloc[-1] > close.rolling(20).max().iloc[-2] and money.iloc[-1] > ma_money_20.iloc[-1] * 1.3:
+        main_score += 25
         main_signals.append("帶量突破")
 
-    # 高量下跌警訊
     if close.iloc[-1] < close.iloc[-2] and volume.iloc[-1] > volume.rolling(20).mean().iloc[-1] * 1.5:
         main_score -= 20
         main_signals.append("高量下跌警訊")
@@ -514,7 +592,7 @@ def analyze_stock(df):
         score += 20
 
     # 動能
-    if 1 <= change_5d <= 12:
+    if 1 <= change_5d <= 15:
         signals.append("短線動能健康")
         score += 15
 
@@ -529,16 +607,16 @@ def analyze_stock(df):
     # 位置
     position_from_low = (price - low_60) / low_60 * 100
 
-    if 5 <= position_from_low <= 35:
-        signals.append("低位啟動區")
+    if 5 <= position_from_low <= 45:
+        signals.append("低中位啟動區")
         score += 15
 
     # 風險扣分
-    if change_5d > 18:
+    if change_5d > 22:
         warnings.append("5日漲幅過熱")
         score -= 30
 
-    if change_20d > 35:
+    if change_20d > 45:
         warnings.append("20日漲幅過熱")
         score -= 25
 
@@ -551,7 +629,7 @@ def analyze_stock(df):
     if atr_now and price:
         atr_pct = atr_now / price * 100
 
-    if atr_pct > 8:
+    if atr_pct > 10:
         warnings.append("波動過大")
         score -= 15
 
@@ -610,6 +688,7 @@ def load_scan_results():
         "market_score": 0,
         "risk_mode": "-",
         "stock_pool_count": 0,
+        "candidate_count": 0,
         "count": 0,
         "results": []
     }
@@ -638,16 +717,13 @@ def scan_market():
 
             total_score = result["score"] + market_score
 
-            # 嚴格篩選條件
-            is_quality_stock = (
+            is_candidate = (
                 total_score >= MIN_SCORE and
-                result["main_score"] >= 70 and
-                result["money_ratio"] >= 1.5 and
-                result["main_buy_days"] >= 2 and
-                result["strong_buy_days"] >= 1
+                result["main_score"] >= 35 and
+                result["money_ratio"] >= 1.1
             )
 
-            if is_quality_stock:
+            if is_candidate:
                 results.append({
                     "symbol": symbol,
                     "name": name,
@@ -676,7 +752,7 @@ def scan_market():
                 save_scan_status("running", f"正在掃描全市場：{i}/{total}")
                 print(f"已掃描 {i}/{total}")
 
-            time.sleep(0.05)
+            time.sleep(0.03)
 
         except Exception as e:
             print("單檔掃描失敗：", symbol, e)
@@ -684,22 +760,26 @@ def scan_market():
 
     results = sorted(results, key=lambda x: x["score"], reverse=True)
 
+    candidate_count = len(results)
+    display_results = results[:MAX_RESULTS]
+
     save_scan_results({
         "updated_at": taiwan_now(),
         "market_status": market_status,
         "market_score": market_score,
         "risk_mode": risk_mode,
         "stock_pool_count": total,
-        "count": len(results),
-        "results": results
+        "candidate_count": candidate_count,
+        "count": len(display_results),
+        "results": display_results
     })
 
     save_scan_status(
         "done",
-        f"掃描完成：股票池 {total} 檔，符合條件 {len(results)} 檔。"
+        f"掃描完成：股票池 {total} 檔，候選 {candidate_count} 檔，顯示前 {len(display_results)} 檔。"
     )
 
-    print("掃描完成：", taiwan_now(), "股票池", total, "檔，符合", len(results), "檔")
+    print("掃描完成：", taiwan_now(), "股票池", total, "候選", candidate_count, "顯示", len(display_results))
 
 
 # ======================
@@ -785,6 +865,7 @@ def index():
         risk_mode=scan_data.get("risk_mode", "-"),
         scan_updated_at=scan_data.get("updated_at", "尚未掃描"),
         scan_count=scan_data.get("count", 0),
+        candidate_count=scan_data.get("candidate_count", 0),
         stock_pool_count=scan_data.get("stock_pool_count", 0),
         scan_status=scan_status_data.get("status", "idle"),
         scan_message=scan_status_data.get("message", "尚未掃描"),
