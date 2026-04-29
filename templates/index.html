@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>主力資金 AI 選股系統</title>
+<title>SAB 主力資金 AI 選股系統</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -49,10 +49,24 @@ hr {
     color: #facc15;
 }
 
-.main-score {
-    font-size: 26px;
-    font-weight: 800;
+.level-s {
+    color: #facc15;
+    font-weight: 900;
+}
+
+.level-a {
     color: #38bdf8;
+    font-weight: 900;
+}
+
+.level-b {
+    color: #22c55e;
+    font-weight: 900;
+}
+
+.level-hot {
+    color: #fb7185;
+    font-weight: 900;
 }
 
 .good {
@@ -166,6 +180,22 @@ hr {
     background: #1d4ed8;
     color: #ffffff;
 }
+
+.level-card-s {
+    border-color: #facc15;
+}
+
+.level-card-a {
+    border-color: #38bdf8;
+}
+
+.level-card-b {
+    border-color: #22c55e;
+}
+
+.level-card-hot {
+    border-color: #fb7185;
+}
 </style>
 </head>
 
@@ -173,12 +203,15 @@ hr {
 
 <div class="container py-4">
 
-<h2>💰 主力資金 AI 短線 + 波段選股系統</h2>
+<h2>💰 S / A / B 主力資金 AI 選股系統</h2>
 
 <div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
 <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
 <div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
-<div class="info-line">📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 候選：{{ candidate_count }} 檔 ｜ 顯示：{{ scan_count }} 檔</div>
+<div class="info-line">
+    📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 
+    S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
+</div>
 
 <div class="my-3">
     <a href="/scan-now" class="btn btn-success me-2">立即重新掃描</a>
@@ -191,7 +224,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    系統每天台灣時間 16:00 自動背景掃描。主力資金分數是用「價量金額」推估，不等於真實法人買賣超。系統會從候選股票中只顯示分數最高前 20 檔。
+    S級＝優先觀察；A級＝等待突破或拉回；B級＝觀察名單；過熱區＝分數高但不建議追高。主力資金為價量金額推估，不代表真實法人買賣超。
 </div>
 
 <hr>
@@ -287,19 +320,21 @@ hr {
 
 <hr>
 
-<h4 class="section-title">🔍 主力資金選股結果</h4>
+{% macro stock_cards(results, title, level_class, card_class, empty_text) %}
+<h4 class="section-title">{{ title }}</h4>
 
-{% if recs %}
+{% if results %}
 <div class="row">
-{% for r in recs %}
+{% for r in results %}
 <div class="col-lg-4 col-md-6 mb-3">
-    <div class="card p-3 h-100">
+    <div class="card {{ card_class }} p-3 h-100">
 
         <h5>{{ r.name }}</h5>
         <div class="small-text">{{ r.symbol }}</div>
 
         <hr>
 
+        <div>等級：<span class="{{ level_class }}">{{ r.level }}</span></div>
         <div>現價：<b>{{ r.price }}</b></div>
         <div>5日漲幅：<span class="blue">{{ r.change_5d }}%</span></div>
         <div>20日漲幅：<span class="blue">{{ r.change_20d }}%</span></div>
@@ -314,7 +349,6 @@ hr {
 
         <hr>
 
-        <div class="main-score">主力資金分：{{ r.main_score }}</div>
         <div>資金放大倍率：<span class="purple">{{ r.money_ratio }}</span> 倍</div>
         <div>近10日疑似主力承接：<span class="good">{{ r.main_buy_days }}</span> 天</div>
         <div>近10日強勢買盤：<span class="good">{{ r.strong_buy_days }}</span> 天</div>
@@ -360,14 +394,29 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-    目前沒有符合條件的股票。可以重新掃描，或等每日 16:00 自動更新。
+{{ empty_text }}
 </div>
 {% endif %}
+{% endmacro %}
+
+{{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票，代表沒有特別強勢且風險相對可控的標的。") }}
+
+<hr>
+
+{{ stock_cards(a_results, "🔷 A級｜等待突破或拉回", "level-a", "level-card-a", "目前沒有 A 級股票。") }}
+
+<hr>
+
+{{ stock_cards(b_results, "🟢 B級｜觀察名單", "level-b", "level-card-b", "目前沒有 B 級股票。") }}
+
+<hr>
+
+{{ stock_cards(hot_results, "🔥 過熱區｜分數高但不建議追高", "level-hot", "level-card-hot", "目前沒有過熱警示股票。") }}
 
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。主力資金為價量推估，不代表真實法人或主力買賣資料。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。S/A/B 分級只是輔助判斷，不是買賣保證。主力資金為價量推估，不代表真實法人或主力買賣資料。
 </div>
 
 </div>
