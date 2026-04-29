@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>SAB 主力資金 AI 選股系統</title>
+<title>法人級 AI 選股系統</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -20,7 +20,7 @@ body {
 }
 
 .container {
-    max-width: 1320px;
+    max-width: 1380px;
 }
 
 .card {
@@ -119,6 +119,16 @@ hr {
     color: #dcfce7;
 }
 
+.badge-inst {
+    background: #7c3aed;
+    color: #ede9fe;
+}
+
+.badge-sector {
+    background: #ca8a04;
+    color: #fef9c3;
+}
+
 .badge-warn {
     background: #b91c1c;
     color: #fee2e2;
@@ -196,6 +206,14 @@ hr {
 .level-card-hot {
     border-color: #fb7185;
 }
+
+.metric-box {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 8px;
+    margin-bottom: 6px;
+}
 </style>
 </head>
 
@@ -203,7 +221,7 @@ hr {
 
 <div class="container py-4">
 
-<h2>💰 S / A / B 主力資金 AI 選股系統</h2>
+<h2>💰 完整法人級 AI 選股系統</h2>
 
 <div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
 <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
@@ -224,7 +242,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    S級＝優先觀察；A級＝等待突破或拉回；B級＝觀察名單；過熱區＝分數高但不建議追高。主力資金為價量金額推估，不代表真實法人買賣超。
+    系統包含技術分、主力資金分、法人籌碼分、族群強度分、大盤環境分、過熱扣分、S/A/B 分級與簡易回測。資料來源若暫時失敗，系統會自動使用快取或保底股票池。
 </div>
 
 <hr>
@@ -330,7 +348,7 @@ hr {
     <div class="card {{ card_class }} p-3 h-100">
 
         <h5>{{ r.name }}</h5>
-        <div class="small-text">{{ r.symbol }}</div>
+        <div class="small-text">{{ r.symbol }} ｜ {{ r.sector }}</div>
 
         <hr>
 
@@ -343,12 +361,16 @@ hr {
         <div class="mt-2">綜合分數</div>
         <div class="score">{{ r.score }}</div>
 
-        <div class="small-text">
-            技術分：{{ r.technical_score }} ｜ 主力資金分：{{ r.main_score }} ｜ 大盤：{{ r.market_status }}
+        <div class="metric-box">
+            <div>技術分：<span class="blue">{{ r.technical_score }}</span></div>
+            <div>主力資金分：<span class="purple">{{ r.main_score }}</span></div>
+            <div>法人籌碼分：<span class="good">{{ r.inst_score }}</span></div>
+            <div>族群強度分：<span class="warning">{{ r.sector_score }}</span></div>
         </div>
 
         <hr>
 
+        <div class="small-text">主力資金</div>
         <div>資金放大倍率：<span class="purple">{{ r.money_ratio }}</span> 倍</div>
         <div>近10日疑似主力承接：<span class="good">{{ r.main_buy_days }}</span> 天</div>
         <div>近10日強勢買盤：<span class="good">{{ r.strong_buy_days }}</span> 天</div>
@@ -358,6 +380,30 @@ hr {
                 <span class="badge badge-main">{{ s }}</span>
             {% endfor %}
         </div>
+
+        <hr>
+
+        <div class="small-text">法人籌碼</div>
+        <div>外資買超天數：{{ r.foreign_days }}</div>
+        <div>投信買超天數：{{ r.trust_days }}</div>
+        <div>自營商買超天數：{{ r.dealer_days }}</div>
+        <div>法人合計淨買賣：{{ r.total_net }}</div>
+
+        <div class="mt-2">
+            {% for s in r.inst_signals %}
+                <span class="badge badge-inst">{{ s }}</span>
+            {% endfor %}
+        </div>
+
+        <hr>
+
+        <div class="small-text">族群強度</div>
+        <div>族群：<span class="warning">{{ r.sector }}</span></div>
+        <div>族群5日均漲幅：{{ r.sector_avg_5d }}%</div>
+        <div>族群20日均漲幅：{{ r.sector_avg_20d }}%</div>
+        <div>族群強勢比例：{{ r.sector_strong_ratio }}%</div>
+
+        <span class="badge badge-sector">族群強度 {{ r.sector_score }}</span>
 
         <hr>
 
@@ -375,6 +421,14 @@ hr {
             {% endfor %}
         </div>
         {% endif %}
+
+        <hr>
+
+        <div class="small-text">簡易回測</div>
+        <div>回測次數：{{ r.bt_count }}</div>
+        <div>回測勝率：{{ r.bt_winrate }}%</div>
+        <div>平均報酬：{{ r.bt_avg_return }}%</div>
+        <div>期望值：{{ r.bt_expectancy }}%</div>
 
         <hr>
 
@@ -399,7 +453,7 @@ hr {
 {% endif %}
 {% endmacro %}
 
-{{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票，代表沒有特別強勢且風險相對可控的標的。") }}
+{{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票。") }}
 
 <hr>
 
@@ -416,7 +470,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。S/A/B 分級只是輔助判斷，不是買賣保證。主力資金為價量推估，不代表真實法人或主力買賣資料。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。法人籌碼資料與主力資金分可能受資料來源延遲或失敗影響；主力資金為價量推估，不代表真實法人或主力買賣資料。
 </div>
 
 </div>
