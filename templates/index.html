@@ -69,6 +69,11 @@ hr {
     font-weight: 900;
 }
 
+.elite-title {
+    color: #facc15;
+    font-weight: 900;
+}
+
 .good {
     color: #22c55e;
     font-weight: bold;
@@ -134,6 +139,12 @@ hr {
     color: #fee2e2;
 }
 
+.badge-elite {
+    background: #facc15;
+    color: #111827;
+    font-weight: 900;
+}
+
 .section-title {
     margin-top: 28px;
     margin-bottom: 12px;
@@ -173,6 +184,11 @@ hr {
 
 .top-card {
     background: linear-gradient(135deg, #111827, #0f172a);
+}
+
+.elite-card {
+    background: linear-gradient(135deg, #1e1b4b, #111827);
+    border-color: #facc15;
 }
 
 .btn-warning {
@@ -228,7 +244,7 @@ hr {
 <div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
 <div class="info-line">
     📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 
-    S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
+    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
 </div>
 
 <div class="my-3">
@@ -242,7 +258,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    系統包含技術分、主力資金分、法人籌碼分、族群強度分、大盤環境分、過熱扣分、S/A/B 分級與簡易回測。資料來源若暫時失敗，系統會自動使用快取或保底股票池。
+    今日精選最多 5 檔，會優先從 S 級挑選，再由 A 級補足，並排除過熱、距離均線太遠、高量下跌等高風險標的。
 </div>
 
 <hr>
@@ -338,7 +354,7 @@ hr {
 
 <hr>
 
-{% macro stock_cards(results, title, level_class, card_class, empty_text) %}
+{% macro stock_cards(results, title, level_class, card_class, empty_text, elite=False) %}
 <h4 class="section-title">{{ title }}</h4>
 
 {% if results %}
@@ -346,6 +362,10 @@ hr {
 {% for r in results %}
 <div class="col-lg-4 col-md-6 mb-3">
     <div class="card {{ card_class }} p-3 h-100">
+
+        {% if elite %}
+        <span class="badge badge-elite mb-2">今日精選</span>
+        {% endif %}
 
         <h5>{{ r.name }}</h5>
         <div class="small-text">{{ r.symbol }} ｜ {{ r.sector }}</div>
@@ -356,10 +376,17 @@ hr {
         <div>現價：<b>{{ r.price }}</b></div>
         <div>5日漲幅：<span class="blue">{{ r.change_5d }}%</span></div>
         <div>20日漲幅：<span class="blue">{{ r.change_20d }}%</span></div>
+        <div>距月線：{{ r.ma20_distance }}%</div>
         <div>ATR 波動：{{ r.atr_pct }}%</div>
 
         <div class="mt-2">綜合分數</div>
         <div class="score">{{ r.score }}</div>
+
+        {% if elite and r.elite_reason %}
+        <div class="alert alert-info mt-2">
+            {{ r.elite_reason }}
+        </div>
+        {% endif %}
 
         <div class="metric-box">
             <div>技術分：<span class="blue">{{ r.technical_score }}</span></div>
@@ -453,6 +480,10 @@ hr {
 {% endif %}
 {% endmacro %}
 
+{{ stock_cards(elite_results, "🎯 今日精選｜最多 5 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
+
+<hr>
+
 {{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票。") }}
 
 <hr>
@@ -470,7 +501,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。法人籌碼資料與主力資金分可能受資料來源延遲或失敗影響；主力資金為價量推估，不代表真實法人或主力買賣資料。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。今日精選只是把全市場結果濃縮成較適合觀察的候選名單，不代表必買或保證獲利。
 </div>
 
 </div>
