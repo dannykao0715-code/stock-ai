@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 import yfinance as yf
 
+from io import StringIO
 from flask import Flask, render_template, redirect, url_for, request, Response
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -47,6 +48,10 @@ TRACK_FILE = "track.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 INST_FILE = "institutional_cache.json"
+
+# 全市場股票池判斷
+FULL_MARKET_MIN_COUNT = 1700
+PARTIAL_MARKET_MIN_COUNT = 1000
 
 MAX_ELITE_RESULTS = 5
 MAX_S_RESULTS = 10
@@ -200,10 +205,11 @@ def get_fallback_stock_pool():
 # ======================
 # 股票池快取
 # ======================
-def save_stock_pool(market):
+def save_stock_pool(market, source_note=""):
     data = {
         "updated_at": taiwan_now(),
         "count": len(market),
+        "source_note": source_note,
         "stocks": market
     }
 
@@ -218,15 +224,16 @@ def load_stock_pool_cache():
                 data = json.load(f)
 
             stocks = data.get("stocks", {})
+            count = len(stocks)
 
-            if stocks and len(stocks) > 100:
-                print("使用快取股票池，共", len(stocks), "檔")
-                return stocks
+            if stocks and count > 100:
+                print("使用快取股票池，共", count, "檔")
+                return stocks, data
 
         except Exception as e:
             print("讀取股票池快取失敗：", e)
 
-    return None
+    return None, None
 
 
 # ======================
@@ -246,16 +253,22 @@ def normalize_stock_item(code, name, industry="其他", suffix=".TW"):
     return None, None
 
 
+def fetch_json_url(url, timeout=20):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json,text/plain,*/*"
+    }
+
+    res = requests.get(url, headers=headers, timeout=timeout)
+    res.raise_for_status()
+    return res.json()
+
+
 def fetch_twse_openapi_stock_pool():
     market = {}
 
     try:
-        url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        res = requests.get(url, headers=headers, timeout=20)
-        res.raise_for_status()
-        data = res.json()
+        data = fetch_json_url("https://openapi.twse.com.tw/v1/opendata/t187ap03_L")
 
         for item in data:
             code = item.get("公司代號", "")
@@ -274,51 +287,103 @@ def fetch_twse_openapi_stock_pool():
         return {}
 
 
+def parse_tpex_item(item):
+    code_keys = [
+        "公司代號",
+        "股票代號",
+        "有價證券代號",
+        "證券代號",
+        "SecuritiesCompanyCode",
+        "CompanyCode",
+        "Code",
+        "stock_id",
+        "stk_code"
+    ]
+
+    name_keys = [
+        "公司簡稱",
+        "公司名稱",
+        "股票名稱",
+        "有價證券名稱",
+        "證券簡稱",
+        "CompanyName",
+        "Name",
+        "stock_name",
+        "stk_name"
+    ]
+
+    industry_keys = [
+        "產業別",
+        "產業類別",
+        "IndustryCode",
+        "Industry",
+        "industry"
+    ]
+
+    code = ""
+    name = ""
+    industry = "上櫃"
+
+    for k in code_keys:
+        if k in item and item.get(k):
+            code = item.get(k)
+            break
+
+    for k in name_keys:
+        if k in item and item.get(k):
+            name = item.get(k)
+            break
+
+    for k in industry_keys:
+        if k in item and item.get(k):
+            industry = item.get(k)
+            break
+
+    return normalize_stock_item(code, name, industry, ".TWO")
+
+
 def fetch_tpex_openapi_stock_pool():
     market = {}
 
     urls = [
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
         "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_company",
-        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_company_basic",
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_listed_companies",
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_security_info"
     ]
 
     for url in urls:
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            res = requests.get(url, headers=headers, timeout=20)
-            res.raise_for_status()
-            data = res.json()
+            data = fetch_json_url(url)
 
-            for item in data:
-                code = (
-                    item.get("公司代號") or
-                    item.get("股票代號") or
-                    item.get("SecuritiesCompanyCode") or
-                    item.get("CompanyCode") or
-                    ""
-                )
+            temp = {}
 
-                name = (
-                    item.get("公司簡稱") or
-                    item.get("公司名稱") or
-                    item.get("股票名稱") or
-                    item.get("CompanyName") or
-                    ""
-                )
+            if isinstance(data, dict):
+                if "data" in data and isinstance(data["data"], list):
+                    rows = data["data"]
+                else:
+                    rows = []
+            elif isinstance(data, list):
+                rows = data
+            else:
+                rows = []
 
-                industry = (
-                    item.get("產業別") or
-                    item.get("IndustryCode") or
-                    item.get("Industry") or
-                    "上櫃"
-                )
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
 
-                symbol, info = normalize_stock_item(code, name, industry, ".TWO")
+                symbol, info = parse_tpex_item(item)
                 if symbol:
-                    market[symbol] = info
+                    temp[symbol] = info
 
-            if len(market) > 100:
-                print("TPEx OpenAPI 上櫃股票：", len(market))
+            print("TPEx OpenAPI 嘗試：", url, len(temp), "檔")
+
+            if len(temp) > len(market):
+                market = temp
+
+            if len(market) >= 700:
+                print("TPEx OpenAPI 上櫃股票成功：", len(market))
                 return market
 
         except Exception as e:
@@ -327,68 +392,148 @@ def fetch_tpex_openapi_stock_pool():
     return market
 
 
-def fetch_isin_all_stock_pool():
+def fetch_isin_by_mode(mode, suffix, industry_label):
     market = {}
 
     try:
-        sources = [
-            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW", "上市"),
-            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO", "上櫃")
-        ]
+        url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={mode}"
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
 
-        for url, suffix, industry in sources:
-            tables = pd.read_html(url, encoding="big5")
-            df = tables[0]
-            df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
+        res = requests.get(url, headers=headers, timeout=30)
+        res.raise_for_status()
 
-            for item in df[0]:
-                try:
-                    parts = str(item).split()
-                    code = parts[0]
-                    name = parts[1]
+        # ISIN 常見編碼是 Big5/CP950
+        try:
+            text = res.content.decode("big5", errors="ignore")
+        except Exception:
+            text = res.text
 
-                    symbol, info = normalize_stock_item(code, name, industry, suffix)
-                    if symbol:
-                        market[symbol] = info
-                except Exception:
-                    continue
+        tables = pd.read_html(StringIO(text))
+        df = tables[0]
 
-        print("ISIN 全市場股票：", len(market))
+        df = df[df[0].astype(str).str.contains(r"^\d{4}", na=False)]
+
+        for item in df[0]:
+            try:
+                parts = str(item).split()
+                code = parts[0]
+                name = parts[1]
+
+                symbol, info = normalize_stock_item(code, name, industry_label, suffix)
+                if symbol:
+                    market[symbol] = info
+            except Exception:
+                continue
+
         return market
 
     except Exception as e:
-        print("ISIN 全市場失敗：", e)
+        print(f"ISIN mode={mode} 失敗：", e)
         return {}
 
 
+def fetch_isin_all_stock_pool():
+    market = {}
+
+    listed = fetch_isin_by_mode(2, ".TW", "上市")
+    otc = fetch_isin_by_mode(4, ".TWO", "上櫃")
+
+    market.update(listed)
+    market.update(otc)
+
+    print("ISIN 上市股票：", len(listed))
+    print("ISIN 上櫃股票：", len(otc))
+    print("ISIN 全市場股票：", len(market))
+
+    return market
+
+
+def choose_better_pool(pool_a, pool_b):
+    if not pool_a:
+        return pool_b
+    if not pool_b:
+        return pool_a
+    return pool_b if len(pool_b) > len(pool_a) else pool_a
+
+
 def get_stock_pool():
+    source_log = []
+
+    cache, cache_meta = load_stock_pool_cache()
+    cache_count = len(cache) if cache else 0
+
+    if cache_count:
+        source_log.append(f"快取：{cache_count}檔")
+
     market = {}
 
     twse = fetch_twse_openapi_stock_pool()
+    source_log.append(f"TWSE上市OpenAPI：{len(twse)}檔")
     market.update(twse)
 
     tpex = fetch_tpex_openapi_stock_pool()
+    source_log.append(f"TPEx上櫃OpenAPI：{len(tpex)}檔")
     market.update(tpex)
 
-    if len(market) < 1000:
-        print("股票池數量不足，改用 ISIN 全市場補抓")
+    combined_count = len(market)
+    source_log.append(f"OpenAPI合計：{combined_count}檔")
+
+    # 如果 OpenAPI 不完整，就強制跑 ISIN 全市場補抓
+    isin_all = {}
+
+    if combined_count < FULL_MARKET_MIN_COUNT:
+        print("OpenAPI 股票池不足，改用 ISIN 全市場補抓")
         isin_all = fetch_isin_all_stock_pool()
+        source_log.append(f"ISIN全市場：{len(isin_all)}檔")
 
         if len(isin_all) > len(market):
             market = isin_all
 
-    if len(market) > 1000:
-        save_stock_pool(market)
-        print("全市場股票池更新成功，共", len(market), "檔")
-        return market
+    current_count = len(market)
 
-    cache = load_stock_pool_cache()
-    if cache:
-        print("使用快取股票池，共", len(cache), "檔")
+    # 若目前不是完整市場，但快取是完整市場，優先使用完整快取
+    if current_count < FULL_MARKET_MIN_COUNT and cache and cache_count >= FULL_MARKET_MIN_COUNT:
+        note = "；".join(source_log) + f"；目前來源不足，改用完整快取 {cache_count} 檔"
+        print(note)
+        save_scan_status("running", note)
         return cache
 
-    print("使用產業龍頭保底股票池")
-    return get_fallback_stock_pool()
+    # 若目前抓到完整市場，才允許覆蓋快取
+    if current_count >= FULL_MARKET_MIN_COUNT:
+        note = "；".join(source_log) + f"；採用完整股票池 {current_count} 檔"
+        save_stock_pool(market, note)
+        print(note)
+        save_scan_status("running", note)
+        return market
+
+    # 若目前只有部分市場，但快取更多，使用快取
+    if cache and cache_count > current_count:
+        note = "；".join(source_log) + f"；目前僅 {current_count} 檔，改用較完整快取 {cache_count} 檔"
+        print(note)
+        save_scan_status("running", note)
+        return cache
+
+    # 若目前超過 1000 檔但未達完整市場，仍可使用，但不覆蓋完整快取
+    if current_count >= PARTIAL_MARKET_MIN_COUNT:
+        note = "；".join(source_log) + f"；警告：目前僅部分股票池 {current_count} 檔，未達完整市場門檻 {FULL_MARKET_MIN_COUNT}"
+        print(note)
+        save_scan_status("running", note)
+        return market
+
+    if cache:
+        note = "；".join(source_log) + f"；來源失敗，改用快取 {cache_count} 檔"
+        print(note)
+        save_scan_status("running", note)
+        return cache
+
+    fallback = get_fallback_stock_pool()
+    note = "；".join(source_log) + f"；所有來源失敗，使用保底股票池 {len(fallback)} 檔"
+    print(note)
+    save_scan_status("running", note)
+    return fallback
 
 
 # ======================
@@ -1179,7 +1324,7 @@ def load_scan_results():
 # 全市場掃描
 # ======================
 def scan_market():
-    save_scan_status("running", "正在背景掃描全市場，請稍後重新整理。")
+    save_scan_status("running", "正在建立強化版全市場股票池，請稍後重新整理。")
     print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
@@ -1188,6 +1333,8 @@ def scan_market():
 
     analyzed = []
     total = len(stocks)
+
+    save_scan_status("running", f"股票池建立完成：{total} 檔，開始掃描個股。")
 
     for i, (symbol, info) in enumerate(stocks.items(), start=1):
         try:
