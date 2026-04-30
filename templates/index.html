@@ -20,7 +20,7 @@ body {
 }
 
 .container {
-    max-width: 1380px;
+    max-width: 1420px;
 }
 
 .card {
@@ -44,7 +44,7 @@ hr {
 }
 
 .score {
-    font-size: 38px;
+    font-size: 36px;
     font-weight: 900;
     color: #facc15;
 }
@@ -256,6 +256,21 @@ hr {
     padding: 10px;
     margin-bottom: 8px;
 }
+
+.risk-on {
+    color: #22c55e;
+    font-weight: 900;
+}
+
+.risk-off {
+    color: #ef4444;
+    font-weight: 900;
+}
+
+.rank-number {
+    color: #facc15;
+    font-weight: 900;
+}
 </style>
 </head>
 
@@ -267,7 +282,15 @@ hr {
 
 <div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
 <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
-<div class="info-line">🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }}</div>
+<div class="info-line">
+    🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
+    風險開關：
+    {% if allow_new_positions %}
+        <span class="risk-on">{{ risk_switch }}</span>
+    {% else %}
+        <span class="risk-off">{{ risk_switch }}</span>
+    {% endif %}
+</div>
 <div class="info-line">
     📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 
     今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
@@ -284,28 +307,90 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    第一階段優化已啟用：系統會判斷買點類型與進場狀態，例如「突破型、拉回型、低位啟動型、強勢續攻型、過熱觀察型」，並提示「可觀察進場、等拉回、等突破、過熱不追、跌破取消」。
+    {{ risk_note }}
 </div>
 
 <hr>
 
-<h4 class="section-title">📊 追蹤績效</h4>
+<h4 class="section-title">📊 績效與資金控管總覽</h4>
 
 <div class="row mb-3">
-    <div class="col-md-6 mb-3">
+    <div class="col-md-3 mb-3">
         <div class="card top-card p-3">
             <div class="small-text">追蹤勝率</div>
             <div class="score">{{ winrate }}%</div>
         </div>
     </div>
 
-    <div class="col-md-6 mb-3">
+    <div class="col-md-3 mb-3">
         <div class="card top-card p-3">
-            <div class="small-text">平均報酬</div>
+            <div class="small-text">追蹤平均報酬</div>
             <div class="score">{{ avg }}%</div>
         </div>
     </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card top-card p-3">
+            <div class="small-text">交易日誌勝率</div>
+            <div class="score">{{ trade_stats.trade_winrate }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card top-card p-3">
+            <div class="small-text">交易平均報酬</div>
+            <div class="score">{{ trade_stats.trade_avg_return }}%</div>
+        </div>
+    </div>
 </div>
+
+<div class="alert alert-secondary">
+    本金設定：{{ account_size }} 元 ｜ 單筆風險：{{ risk_per_trade }}% ｜ 
+    已結案交易：{{ trade_stats.trade_count }} 筆 ｜ 
+    最佳買點類型：{{ trade_stats.best_buy_type }} ｜ 
+    最佳等級：{{ trade_stats.best_level }}
+</div>
+
+<hr>
+
+<h4 class="section-title">🔥 族群輪動排行榜 TOP 10</h4>
+
+{% if sector_rankings %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>排名</th>
+<th>族群</th>
+<th>族群分</th>
+<th>5日均漲幅</th>
+<th>20日均漲幅</th>
+<th>主力均分</th>
+<th>法人均分</th>
+<th>強勢比例</th>
+<th>樣本數</th>
+</tr>
+</thead>
+<tbody>
+{% for s in sector_rankings %}
+<tr>
+<td class="rank-number">{{ s.rank }}</td>
+<td>{{ s.sector }}</td>
+<td class="warning">{{ s.sector_score }}</td>
+<td>{{ s.sector_avg_5d }}%</td>
+<td>{{ s.sector_avg_20d }}%</td>
+<td>{{ s.sector_avg_main }}</td>
+<td>{{ s.sector_avg_inst }}</td>
+<td>{{ s.sector_strong_ratio }}%</td>
+<td>{{ s.sector_stock_count }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-secondary">目前尚無族群排行資料。</div>
+{% endif %}
 
 <hr>
 
@@ -320,6 +405,8 @@ hr {
 <th>成本</th>
 <th>現價</th>
 <th>損益</th>
+<th>等級</th>
+<th>買點</th>
 <th>停損</th>
 <th>停利1</th>
 <th>停利2</th>
@@ -346,6 +433,8 @@ hr {
 {% endif %}
 </td>
 
+<td>{{ t.level }}</td>
+<td>{{ t.buy_type }}</td>
 <td class="bad">{{ t.stop_loss }}</td>
 <td class="good">{{ t.take_profit_1 }}</td>
 <td class="good">{{ t.take_profit_2 }}</td>
@@ -363,9 +452,8 @@ hr {
 <td>{{ t.date }}</td>
 
 <td>
-<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm">
-刪除
-</a>
+<a href="/close-trade/{{ t.symbol }}" class="btn btn-success btn-sm mb-1">結案</a>
+<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm mb-1">刪除</a>
 </td>
 </tr>
 {% endfor %}
@@ -376,6 +464,55 @@ hr {
 <div class="alert alert-secondary">
 目前沒有追蹤股票。
 </div>
+{% endif %}
+
+<hr>
+
+<h4 class="section-title">📘 最近交易日誌</h4>
+
+{% if trade_logs %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>股票</th>
+<th>進場</th>
+<th>出場</th>
+<th>損益</th>
+<th>等級</th>
+<th>買點</th>
+<th>族群</th>
+<th>進場日</th>
+<th>出場日</th>
+</tr>
+</thead>
+<tbody>
+{% for t in trade_logs %}
+<tr>
+<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
+<td>{{ t.entry_price }}</td>
+<td>{{ t.exit_price }}</td>
+<td>
+{% if t.pnl_pct > 0 %}
+<span class="good">{{ t.pnl_pct }}%</span>
+{% elif t.pnl_pct < 0 %}
+<span class="bad">{{ t.pnl_pct }}%</span>
+{% else %}
+{{ t.pnl_pct }}%
+{% endif %}
+</td>
+<td>{{ t.level }}</td>
+<td>{{ t.buy_type }}</td>
+<td>{{ t.sector }}</td>
+<td>{{ t.entry_date }}</td>
+<td>{{ t.exit_date }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-secondary">目前還沒有已結案交易。</div>
 {% endif %}
 
 <hr>
@@ -404,7 +541,7 @@ hr {
         {% endif %}
 
         <h5>{{ r.name }}</h5>
-        <div class="small-text">{{ r.symbol }} ｜ {{ r.sector }}</div>
+        <div class="small-text">{{ r.symbol }} ｜ {{ r.sector }} ｜ 族群排名：{{ r.sector_rank }}</div>
 
         <hr>
 
@@ -494,18 +631,28 @@ hr {
 
         <hr>
 
-        <div class="small-text">簡易回測</div>
+        <div class="small-text">真實交易回測</div>
         <div>回測次數：{{ r.bt_count }}</div>
-        <div>回測勝率：{{ r.bt_winrate }}%</div>
+        <div>勝率：{{ r.bt_winrate }}%</div>
         <div>平均報酬：{{ r.bt_avg_return }}%</div>
+        <div>平均獲利：{{ r.bt_avg_win }}%</div>
+        <div>平均虧損：{{ r.bt_avg_loss }}%</div>
         <div>期望值：{{ r.bt_expectancy }}%</div>
+        <div>獲利因子：{{ r.bt_profit_factor }}</div>
+        <div>最大回撤：{{ r.bt_max_drawdown }}%</div>
 
         <hr>
 
-        <div class="small-text">建議風控</div>
+        <div class="small-text">建議風控與部位</div>
         <div>停損：<span class="bad">{{ r.stop_loss }}</span></div>
         <div>第一停利：<span class="good">{{ r.take_profit_1 }}</span></div>
         <div>第二停利：<span class="good">{{ r.take_profit_2 }}</span></div>
+        <div>單筆可承受風險：{{ r.risk_amount }} 元</div>
+        <div>每股風險：{{ r.risk_per_share }} 元</div>
+        <div>建議股數：{{ r.suggest_shares }} 股</div>
+        <div>約當張數：<span class="warning">{{ r.suggest_lots }}</span> 張</div>
+        <div>約當部位：{{ r.position_value }} 元</div>
+        <div class="small-text">{{ r.position_note }}</div>
 
         <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}/{{ r.stop_loss }}/{{ r.take_profit_1 }}/{{ r.take_profit_2 }}"
            class="btn btn-warning mt-3">
@@ -544,7 +691,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。買點類型與進場狀態為策略輔助判斷，不代表必買或保證獲利。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。系統包含買點類型、族群輪動、資金控管、真實交易回測、交易日誌與市場風險開關，但所有投資仍需自行判斷並承擔風險。
 </div>
 
 </div>
