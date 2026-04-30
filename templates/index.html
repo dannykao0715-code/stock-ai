@@ -145,6 +145,24 @@ hr {
     font-weight: 900;
 }
 
+.badge-entry {
+    background: #0ea5e9;
+    color: #e0f2fe;
+    font-weight: 900;
+}
+
+.badge-wait {
+    background: #f59e0b;
+    color: #111827;
+    font-weight: 900;
+}
+
+.badge-danger-status {
+    background: #dc2626;
+    color: #fee2e2;
+    font-weight: 900;
+}
+
 .section-title {
     margin-top: 28px;
     margin-bottom: 12px;
@@ -230,6 +248,14 @@ hr {
     padding: 8px;
     margin-bottom: 6px;
 }
+
+.trade-box {
+    background: #111827;
+    border: 1px solid #38bdf8;
+    border-radius: 12px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
 </style>
 </head>
 
@@ -258,7 +284,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    今日精選最多 5 檔，會優先從 S 級挑選，再由 A 級補足，並排除過熱、距離均線太遠、高量下跌等高風險標的。
+    第一階段優化已啟用：系統會判斷買點類型與進場狀態，例如「突破型、拉回型、低位啟動型、強勢續攻型、過熱觀察型」，並提示「可觀察進場、等拉回、等突破、過熱不追、跌破取消」。
 </div>
 
 <hr>
@@ -354,6 +380,16 @@ hr {
 
 <hr>
 
+{% macro entry_badge(status) %}
+    {% if status == "可觀察進場" %}
+        <span class="badge badge-entry">{{ status }}</span>
+    {% elif status == "等拉回" or status == "等突破" or status == "僅列觀察" %}
+        <span class="badge badge-wait">{{ status }}</span>
+    {% else %}
+        <span class="badge badge-danger-status">{{ status }}</span>
+    {% endif %}
+{% endmacro %}
+
 {% macro stock_cards(results, title, level_class, card_class, empty_text, elite=False) %}
 <h4 class="section-title">{{ title }}</h4>
 
@@ -377,10 +413,17 @@ hr {
         <div>5日漲幅：<span class="blue">{{ r.change_5d }}%</span></div>
         <div>20日漲幅：<span class="blue">{{ r.change_20d }}%</span></div>
         <div>距月線：{{ r.ma20_distance }}%</div>
+        <div>距季線：{{ r.ma60_distance }}%</div>
         <div>ATR 波動：{{ r.atr_pct }}%</div>
 
         <div class="mt-2">綜合分數</div>
         <div class="score">{{ r.score }}</div>
+
+        <div class="trade-box">
+            <div>買點類型：<span class="warning">{{ r.buy_type }}</span></div>
+            <div>進場狀態：{{ entry_badge(r.entry_status) }}</div>
+            <div class="small-text mt-2">{{ r.entry_reason }}</div>
+        </div>
 
         {% if elite and r.elite_reason %}
         <div class="alert alert-info mt-2">
@@ -501,7 +544,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。今日精選只是把全市場結果濃縮成較適合觀察的候選名單，不代表必買或保證獲利。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。買點類型與進場狀態為策略輔助判斷，不代表必買或保證獲利。
 </div>
 
 </div>
