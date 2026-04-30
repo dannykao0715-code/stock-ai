@@ -6,12 +6,39 @@ import requests
 import pandas as pd
 import yfinance as yf
 
-from flask import Flask, render_template, redirect, url_for
+from flask import Flask, render_template, redirect, url_for, request, Response
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
+
+# ======================
+# 網站登入保護
+# ======================
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
+
+
+def check_auth(username, password):
+    return username == ADMIN_USER and password == ADMIN_PASSWORD
+
+
+def require_auth():
+    return Response(
+        "需要登入才能使用此網站",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Stock AI Login"'}
+    )
+
+
+@app.before_request
+def protect_site():
+    auth = request.authorization
+
+    if not auth or not check_auth(auth.username, auth.password):
+        return require_auth()
+
 
 TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 
@@ -476,11 +503,6 @@ def save_institutional_cache(stocks):
 
 
 def fetch_institutional_data():
-    """
-    使用 FinMind 公開資料嘗試抓法人買賣超。
-    若外部資料失敗，會回傳空資料，不讓網站壞掉。
-    """
-
     cache = load_institutional_cache()
     if cache:
         return cache
@@ -1217,11 +1239,9 @@ def scan_market():
 
         item["level"] = level
 
-        # 只有顯示名單才做簡易回測，避免掃描太慢
         bt = quick_backtest(item["df"])
         item.update(bt)
 
-        # df 不能存進 json
         item.pop("df", None)
 
         if level == "S":
