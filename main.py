@@ -48,6 +48,7 @@ STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 INST_FILE = "institutional_cache.json"
 
+MAX_ELITE_RESULTS = 5
 MAX_S_RESULTS = 10
 MAX_A_RESULTS = 10
 MAX_B_RESULTS = 10
@@ -113,7 +114,6 @@ def get_fallback_stock_pool():
         "3529.TWO": ("力旺", "IC設計"),
         "4966.TWO": ("譜瑞-KY", "IC設計"),
         "5274.TWO": ("信驊", "IC設計"),
-
         "3711.TW": ("日月光投控", "封測"),
         "6147.TWO": ("頎邦", "封測"),
         "2449.TW": ("京元電子", "封測"),
@@ -122,7 +122,6 @@ def get_fallback_stock_pool():
         "6488.TWO": ("環球晶", "半導體材料"),
         "5483.TWO": ("中美晶", "半導體材料"),
         "4763.TW": ("材料-KY", "半導體材料"),
-
         "2317.TW": ("鴻海", "AI伺服器"),
         "2382.TW": ("廣達", "AI伺服器"),
         "3231.TW": ("緯創", "AI伺服器"),
@@ -136,18 +135,15 @@ def get_fallback_stock_pool():
         "3653.TW": ("健策", "散熱"),
         "8996.TWO": ("高力", "散熱"),
         "2345.TW": ("智邦", "網通"),
-
         "3008.TW": ("大立光", "光學"),
         "3406.TW": ("玉晶光", "光學"),
         "2383.TW": ("台光電", "PCB"),
         "3037.TW": ("欣興", "PCB"),
         "8046.TW": ("南電", "PCB"),
         "3189.TWO": ("景碩", "PCB"),
-
         "2409.TW": ("友達", "面板"),
         "3481.TW": ("群創", "面板"),
         "8069.TWO": ("元太", "電子紙"),
-
         "2881.TW": ("富邦金", "金融"),
         "2882.TW": ("國泰金", "金融"),
         "2886.TW": ("兆豐金", "金融"),
@@ -156,7 +152,6 @@ def get_fallback_stock_pool():
         "2885.TW": ("元大金", "金融"),
         "5880.TW": ("合庫金", "金融"),
         "5871.TW": ("中租-KY", "金融"),
-
         "1301.TW": ("台塑", "塑化"),
         "1303.TW": ("南亞", "塑化"),
         "1326.TW": ("台化", "塑化"),
@@ -164,33 +159,28 @@ def get_fallback_stock_pool():
         "2002.TW": ("中鋼", "鋼鐵"),
         "2027.TW": ("大成鋼", "鋼鐵"),
         "1605.TW": ("華新", "電線電纜"),
-
         "2603.TW": ("長榮", "航運"),
         "2609.TW": ("陽明", "航運"),
         "2615.TW": ("萬海", "航運"),
         "2618.TW": ("長榮航", "航空"),
         "2610.TW": ("華航", "航空"),
         "2606.TW": ("裕民", "航運"),
-
         "6446.TW": ("藥華藥", "生技"),
         "1760.TW": ("寶齡富錦", "生技"),
         "4743.TWO": ("合一", "生技"),
         "4105.TWO": ("東洋", "生技"),
         "6472.TW": ("保瑞", "生技"),
-
         "2412.TW": ("中華電", "電信"),
         "3045.TW": ("台灣大", "電信"),
         "4904.TW": ("遠傳", "電信"),
         "1216.TW": ("統一", "食品"),
         "2912.TW": ("統一超", "通路"),
         "2207.TW": ("和泰車", "汽車"),
-
         "1504.TW": ("東元", "重電"),
         "1513.TW": ("中興電", "重電"),
         "1519.TW": ("華城", "重電"),
         "1609.TW": ("大亞", "電線電纜"),
         "1618.TW": ("合機", "電線電纜"),
-
         "8299.TWO": ("群聯", "記憶體"),
         "3105.TWO": ("穩懋", "砷化鎵"),
         "6187.TWO": ("萬潤", "設備"),
@@ -600,7 +590,6 @@ def calc_institutional_score(symbol, inst_data):
 
     foreign_net = data.get("foreign_net", 0)
     trust_net = data.get("trust_net", 0)
-    dealer_net = data.get("dealer_net", 0)
     total_net = data.get("total_net", 0)
 
     if foreign_days >= 3:
@@ -608,8 +597,12 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("外資連買")
 
     if trust_days >= 3:
-        score += 25
+        score += 30
         signals.append("投信連買")
+
+    if trust_days >= 5:
+        score += 15
+        signals.append("投信連買5日以上")
 
     if dealer_days >= 3:
         score += 10
@@ -620,7 +613,7 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("三大法人合計買超")
 
     if foreign_net > 0 and trust_net > 0:
-        score += 15
+        score += 20
         signals.append("外資投信同步買超")
 
     if trust_net > 0 and trust_days >= 2:
@@ -628,7 +621,7 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("投信買盤延續")
 
     if total_net < 0:
-        score -= 15
+        score -= 20
         signals.append("法人合計賣超")
 
     return {
@@ -642,7 +635,7 @@ def calc_institutional_score(symbol, inst_data):
 
 
 # ======================
-# 技術與主力資金指標
+# 技術與主力資金
 # ======================
 def calc_atr(df, period=14):
     high = df["High"]
@@ -771,6 +764,9 @@ def analyze_stock(df):
     high_60 = high.rolling(60).max().iloc[-2]
     low_60 = low.rolling(60).min().iloc[-1]
 
+    ma20_distance = (price - ma20.iloc[-1]) / ma20.iloc[-1] * 100
+    ma60_distance = (price - ma60.iloc[-1]) / ma60.iloc[-1] * 100
+
     signals = []
     warnings = []
     score = 0
@@ -839,6 +835,14 @@ def analyze_stock(df):
         warnings.append("20日漲幅過熱")
         score -= 25
 
+    if ma20_distance > 12:
+        warnings.append("距離月線過遠")
+        score -= 20
+
+    if ma60_distance > 25:
+        warnings.append("距離季線過遠")
+        score -= 20
+
     if price < ma20.iloc[-1]:
         warnings.append("跌破月線")
         score -= 25
@@ -874,6 +878,8 @@ def analyze_stock(df):
         "change_5d": round(float(change_5d), 2),
         "change_20d": round(float(change_20d), 2),
         "change_60d": round(float(change_60d), 2),
+        "ma20_distance": round(float(ma20_distance), 2),
+        "ma60_distance": round(float(ma60_distance), 2),
         "signals": signals,
         "warnings": warnings,
         "stop_loss": stop_loss,
@@ -1058,6 +1064,8 @@ def classify_stock(item):
         atr_pct > 10 or
         "5日漲幅過熱" in warnings or
         "20日漲幅過熱" in warnings or
+        "距離月線過遠" in warnings or
+        "距離季線過遠" in warnings or
         "高量下跌警訊" in main_signals
     )
 
@@ -1090,6 +1098,48 @@ def classify_stock(item):
     return None
 
 
+def build_elite_results(s_results, a_results):
+    pool = []
+
+    for item in s_results:
+        copied = dict(item)
+        copied["elite_reason"] = "S級優先，分數與資金條件較佳"
+        pool.append(copied)
+
+    for item in a_results:
+        copied = dict(item)
+        copied["elite_reason"] = "A級補選，適合等待突破或拉回"
+        pool.append(copied)
+
+    def elite_score(x):
+        bt_bonus = 0
+        if x.get("bt_expectancy", 0) > 0:
+            bt_bonus += 10
+        if x.get("bt_winrate", 0) >= 50:
+            bt_bonus += 10
+        if x.get("trust_days", 0) >= 3:
+            bt_bonus += 8
+        if x.get("sector_score", 0) >= 20:
+            bt_bonus += 8
+
+        return x.get("score", 0) + bt_bonus
+
+    filtered = []
+
+    for x in pool:
+        if "距離月線過遠" in x.get("warnings", []):
+            continue
+        if "距離季線過遠" in x.get("warnings", []):
+            continue
+        if "高量下跌警訊" in x.get("main_signals", []):
+            continue
+        filtered.append(x)
+
+    filtered = sorted(filtered, key=elite_score, reverse=True)
+
+    return filtered[:MAX_ELITE_RESULTS]
+
+
 # ======================
 # 掃描結果
 # ======================
@@ -1112,10 +1162,12 @@ def load_scan_results():
         "market_score": 0,
         "risk_mode": "-",
         "stock_pool_count": 0,
+        "elite_count": 0,
         "s_count": 0,
         "a_count": 0,
         "b_count": 0,
         "hot_count": 0,
+        "elite_results": [],
         "s_results": [],
         "a_results": [],
         "b_results": [],
@@ -1178,6 +1230,8 @@ def scan_market():
                 "change_5d": result["change_5d"],
                 "change_20d": result["change_20d"],
                 "change_60d": result["change_60d"],
+                "ma20_distance": result["ma20_distance"],
+                "ma60_distance": result["ma60_distance"],
 
                 "signals": result["signals"],
                 "warnings": result["warnings"],
@@ -1258,6 +1312,8 @@ def scan_market():
     b_results = sorted(b_results, key=lambda x: x["score"], reverse=True)
     hot_results = sorted(hot_results, key=lambda x: x["score"], reverse=True)
 
+    elite_results = build_elite_results(s_results, a_results)
+
     data = {
         "updated_at": taiwan_now(),
         "market_status": market_status,
@@ -1265,11 +1321,13 @@ def scan_market():
         "risk_mode": risk_mode,
         "stock_pool_count": total,
 
+        "elite_count": len(elite_results),
         "s_count": len(s_results),
         "a_count": len(a_results),
         "b_count": len(b_results),
         "hot_count": len(hot_results),
 
+        "elite_results": elite_results,
         "s_results": s_results[:MAX_S_RESULTS],
         "a_results": a_results[:MAX_A_RESULTS],
         "b_results": b_results[:MAX_B_RESULTS],
@@ -1280,13 +1338,14 @@ def scan_market():
 
     save_scan_status(
         "done",
-        f"掃描完成：股票池 {total} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔，B級 {len(b_results)} 檔，過熱 {len(hot_results)} 檔。"
+        f"掃描完成：股票池 {total} 檔，今日精選 {len(elite_results)} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔，B級 {len(b_results)} 檔，過熱 {len(hot_results)} 檔。"
     )
 
     print(
         "掃描完成：",
         taiwan_now(),
         "股票池", total,
+        "精選", len(elite_results),
         "S", len(s_results),
         "A", len(a_results),
         "B", len(b_results),
@@ -1375,11 +1434,13 @@ def index():
         scan_updated_at=scan_data.get("updated_at", "尚未掃描"),
         stock_pool_count=scan_data.get("stock_pool_count", 0),
 
+        elite_count=scan_data.get("elite_count", 0),
         s_count=scan_data.get("s_count", 0),
         a_count=scan_data.get("a_count", 0),
         b_count=scan_data.get("b_count", 0),
         hot_count=scan_data.get("hot_count", 0),
 
+        elite_results=scan_data.get("elite_results", []),
         s_results=scan_data.get("s_results", []),
         a_results=scan_data.get("a_results", []),
         b_results=scan_data.get("b_results", []),
