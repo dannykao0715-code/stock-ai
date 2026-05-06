@@ -188,6 +188,7 @@ hr {
 
 .table td {
     color: #e5e7eb;
+    vertical-align: middle;
 }
 
 .top-card {
@@ -260,6 +261,14 @@ hr {
     border-radius: 10px;
     padding: 8px;
 }
+
+.holding-box {
+    background: #111827;
+    border: 1px solid #475569;
+    border-radius: 10px;
+    padding: 8px;
+    min-width: 260px;
+}
 </style>
 </head>
 
@@ -297,7 +306,7 @@ hr {
 
 <div class="alert alert-warning">
     {{ risk_note }}<br>
-    本版已提高條件：今日精選最多 3 檔，只顯示 S 級與 A 級，並加入進場檢查分、風報比、持有管理、移動停利與結案統計。
+    本版已加入：正常回檔、節奏是否還在、大盤/族群仍支撐、結構延續/失效，並整合到持有管理與出場建議。
 </div>
 
 <hr>
@@ -401,11 +410,12 @@ hr {
 <th>買點</th>
 <th>停損</th>
 <th>移動停利/停損</th>
-<th>停利1</th>
-<th>停利2</th>
 <th>訊號</th>
+<th>正常回檔</th>
+<th>節奏</th>
+<th>大盤/族群支撐</th>
+<th>結構</th>
 <th>持有建議</th>
-<th>日期</th>
 <th>操作</th>
 </tr>
 </thead>
@@ -413,7 +423,11 @@ hr {
 <tbody>
 {% for t in tracks %}
 <tr>
-<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
+<td>
+    {{ t.name }}<br>
+    <span class="small-text">{{ t.symbol }}</span><br>
+    <span class="small-text">族群：{{ t.sector }}｜目前排名：{{ t.current_sector_rank }}</span>
+</td>
 <td>{{ t.price }}</td>
 <td>{{ t.curr }}</td>
 
@@ -431,11 +445,9 @@ hr {
 <td>{{ t.buy_type }}</td>
 <td class="bad">{{ t.stop_loss }}</td>
 <td class="warning">{{ t.trailing_stop }}</td>
-<td class="good">{{ t.take_profit_1 }}</td>
-<td class="good">{{ t.take_profit_2 }}</td>
 
 <td>
-{% if t.signal == "停損" or t.signal == "風險警戒" or t.signal == "建議結案" %}
+{% if t.signal == "停損" or t.signal == "風險警戒" or t.signal == "建議結案" or t.signal == "減碼防守" or t.signal == "風險升高" %}
 <span class="bad">{{ t.signal }}</span>
 {% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" or t.signal == "移動停利" %}
 <span class="good">{{ t.signal }}</span>
@@ -445,11 +457,33 @@ hr {
 </td>
 
 <td>
+<div class="holding-box small-text">
+{{ t.pullback_status }}
+</div>
+</td>
+
+<td>
+<div class="holding-box small-text">
+{{ t.rhythm_status }}
+</div>
+</td>
+
+<td>
+<div class="holding-box small-text">
+{{ t.support_status }}
+</div>
+</td>
+
+<td>
+<div class="holding-box small-text">
+{{ t.structure_status }}
+</div>
+</td>
+
+<td>
 <span class="warning">{{ t.holding_advice }}</span><br>
 <span class="small-text">{{ t.holding_reason }}</span>
 </td>
-
-<td>{{ t.date }}</td>
 
 <td>
 <a href="/close-trade/{{ t.symbol }}" class="btn btn-success btn-sm mb-1">結案</a>
@@ -484,6 +518,7 @@ hr {
 <th>進場檢查分</th>
 <th>風報比</th>
 <th>族群</th>
+<th>出場建議</th>
 <th>持有天數</th>
 <th>進場日</th>
 <th>出場日</th>
@@ -509,6 +544,7 @@ hr {
 <td>{{ t.entry_check_score }}</td>
 <td>{{ t.risk_reward_ratio }}</td>
 <td>{{ t.sector }}</td>
+<td>{{ t.exit_advice }}</td>
 <td>{{ t.hold_days }}</td>
 <td>{{ t.entry_date }}</td>
 <td>{{ t.exit_date }}</td>
@@ -700,7 +736,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。本版只顯示今日核心精選、S級與A級；B級與過熱區已隱藏，並加強條件、持有管理、移動停利與結案統計。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。本版已加入正常回檔、節奏判斷、大盤/族群支撐、結構延續與結構失效判斷，並整合到持有管理、移動停利、停損與結案統計。
 </div>
 
 </div>
