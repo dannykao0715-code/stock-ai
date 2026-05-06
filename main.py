@@ -54,11 +54,9 @@ INST_FILE = "institutional_cache.json"
 FULL_MARKET_MIN_COUNT = 1700
 PARTIAL_MARKET_MIN_COUNT = 1000
 
-MAX_ELITE_RESULTS = 5
+MAX_ELITE_RESULTS = 3
 MAX_S_RESULTS = 10
-MAX_A_RESULTS = 10
-MAX_B_RESULTS = 10
-MAX_HOT_RESULTS = 10
+MAX_A_RESULTS = 20
 MAX_SECTOR_RANK = 10
 
 ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "1000000"))
@@ -80,6 +78,13 @@ def taiwan_now():
 
 def today_str():
     return datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
+
+
+def parse_date(date_text):
+    try:
+        return datetime.strptime(date_text, "%Y-%m-%d").date()
+    except Exception:
+        return datetime.now(TAIWAN_TZ).date()
 
 
 # ======================
@@ -127,55 +132,32 @@ def get_fallback_stock_pool():
         "2330.TW": ("台積電", "半導體"),
         "2303.TW": ("聯電", "半導體"),
         "5347.TWO": ("世界", "半導體"),
-        "6770.TW": ("力積電", "半導體"),
         "2454.TW": ("聯發科", "IC設計"),
         "3034.TW": ("聯詠", "IC設計"),
         "2379.TW": ("瑞昱", "IC設計"),
         "3661.TW": ("世芯-KY", "IC設計"),
         "3443.TW": ("創意", "IC設計"),
         "3529.TWO": ("力旺", "IC設計"),
-        "4966.TWO": ("譜瑞-KY", "IC設計"),
         "5274.TWO": ("信驊", "IC設計"),
-        "3711.TW": ("日月光投控", "封測"),
-        "6147.TWO": ("頎邦", "封測"),
-        "2449.TW": ("京元電子", "封測"),
-        "2337.TW": ("旺宏", "記憶體"),
-        "2408.TW": ("南亞科", "記憶體"),
-        "6488.TWO": ("環球晶", "半導體材料"),
-        "5483.TWO": ("中美晶", "半導體材料"),
-        "4763.TW": ("材料-KY", "半導體材料"),
         "2317.TW": ("鴻海", "AI伺服器"),
         "2382.TW": ("廣達", "AI伺服器"),
         "3231.TW": ("緯創", "AI伺服器"),
-        "2356.TW": ("英業達", "AI伺服器"),
         "6669.TW": ("緯穎", "AI伺服器"),
         "2308.TW": ("台達電", "電源"),
-        "2357.TW": ("華碩", "電腦"),
-        "2376.TW": ("技嘉", "電腦"),
         "3017.TW": ("奇鋐", "散熱"),
         "3324.TWO": ("雙鴻", "散熱"),
         "3653.TW": ("健策", "散熱"),
-        "8996.TWO": ("高力", "散熱"),
-        "2345.TW": ("智邦", "網通"),
-        "3008.TW": ("大立光", "光學"),
-        "3406.TW": ("玉晶光", "光學"),
         "2383.TW": ("台光電", "PCB"),
         "3037.TW": ("欣興", "PCB"),
         "8046.TW": ("南電", "PCB"),
-        "3189.TWO": ("景碩", "PCB"),
         "2881.TW": ("富邦金", "金融"),
         "2882.TW": ("國泰金", "金融"),
-        "2886.TW": ("兆豐金", "金融"),
-        "2891.TW": ("中信金", "金融"),
         "2603.TW": ("長榮", "航運"),
         "2609.TW": ("陽明", "航運"),
         "2615.TW": ("萬海", "航運"),
-        "2618.TW": ("長榮航", "航空"),
-        "2610.TW": ("華航", "航空"),
         "1513.TW": ("中興電", "重電"),
         "1519.TW": ("華城", "重電"),
         "1609.TW": ("大亞", "電線電纜"),
-        "1618.TW": ("合機", "電線電纜"),
         "6446.TW": ("藥華藥", "生技"),
         "1760.TW": ("寶齡富錦", "生技"),
         "4743.TWO": ("合一", "生技"),
@@ -213,7 +195,6 @@ def load_stock_pool_cache():
     stocks = data.get("stocks", {})
 
     if stocks and len(stocks) > 100:
-        print("使用快取股票池，共", len(stocks), "檔")
         return stocks, data
 
     return None, None
@@ -259,7 +240,6 @@ def fetch_twse_openapi_stock_pool():
             if symbol:
                 market[symbol] = info
 
-        print("TWSE 上市股票：", len(market))
         return market
 
     except Exception as e:
@@ -335,8 +315,6 @@ def fetch_tpex_openapi_stock_pool():
                 if symbol:
                     temp[symbol] = info
 
-            print("TPEx 嘗試：", url, len(temp), "檔")
-
             if len(temp) > len(market):
                 market = temp
 
@@ -397,10 +375,6 @@ def fetch_isin_all_stock_pool():
     market = {}
     market.update(listed)
     market.update(otc)
-
-    print("ISIN 上市股票：", len(listed))
-    print("ISIN 上櫃股票：", len(otc))
-    print("ISIN 全市場股票：", len(market))
 
     return market
 
@@ -523,7 +497,6 @@ def analyze_index(symbol):
     if df is None or len(df) < 120:
         return {
             "ok": False,
-            "price": None,
             "above_ma20": False,
             "above_ma60": False,
             "ma20_gt_ma60": False,
@@ -549,7 +522,6 @@ def analyze_index(symbol):
 
     return {
         "ok": True,
-        "price": round(float(last), 2),
         "above_ma20": bool(last > ma20.iloc[-1]),
         "above_ma60": bool(last > ma60.iloc[-1]),
         "ma20_gt_ma60": bool(ma20.iloc[-1] > ma60.iloc[-1]),
@@ -571,8 +543,6 @@ def get_market_status():
             "risk_note": "大盤資料不足，暫不建議積極建立新倉。"
         }
 
-    score = twii["trend_score"] + int(otc.get("trend_score", 0) * 0.6)
-
     if twii["above_ma20"] and twii["above_ma60"] and twii["ma20_gt_ma60"] and otc.get("above_ma20"):
         return {
             "market_status": "強多市場",
@@ -580,7 +550,7 @@ def get_market_status():
             "risk_mode": "積極",
             "risk_switch": "允許新倉",
             "allow_new_positions": True,
-            "risk_note": "加權與櫃買結構偏多，可允許 S/A 級進入今日精選。"
+            "risk_note": "加權與櫃買結構偏多，但今日精選仍只保留最核心 3 檔。"
         }
 
     if twii["above_ma60"] and twii["ma20_gt_ma60"]:
@@ -590,7 +560,7 @@ def get_market_status():
             "risk_mode": "正常",
             "risk_switch": "允許新倉",
             "allow_new_positions": True,
-            "risk_note": "大盤中期偏多，但仍需避開過熱與高量轉弱標的。"
+            "risk_note": "大盤中期偏多，但需避開過熱與結構不清楚標的。"
         }
 
     if not twii["above_ma20"] and not otc.get("above_ma20", False):
@@ -741,11 +711,11 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("外資連買")
 
     if trust_days >= 3:
-        score += 30
+        score += 35
         signals.append("投信連買")
 
     if trust_days >= 5:
-        score += 15
+        score += 20
         signals.append("投信連買5日以上")
 
     if dealer_days >= 3:
@@ -757,15 +727,11 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("三大法人合計買超")
 
     if foreign_net > 0 and trust_net > 0:
-        score += 20
+        score += 25
         signals.append("外資投信同步買超")
 
-    if trust_net > 0 and trust_days >= 2:
-        score += 10
-        signals.append("投信買盤延續")
-
     if total_net < 0:
-        score -= 20
+        score -= 25
         signals.append("法人合計賣超")
 
     return {
@@ -828,16 +794,16 @@ def calc_main_force(df):
     main_score = 0
     main_signals = []
 
-    if money_ratio > 1.1:
+    if money_ratio > 1.15:
         main_score += 10
         main_signals.append("資金微幅增溫")
 
-    if money_ratio > 1.2:
-        main_score += 15
+    if money_ratio > 1.3:
+        main_score += 20
         main_signals.append("資金增溫")
 
-    if money_ratio > 1.6:
-        main_score += 25
+    if money_ratio > 1.7:
+        main_score += 30
         main_signals.append("資金明顯放大")
 
     if main_buy_days >= 2:
@@ -845,7 +811,7 @@ def calc_main_force(df):
         main_signals.append("疑似主力承接")
 
     if main_buy_days >= 3:
-        main_score += 20
+        main_score += 25
         main_signals.append("疑似主力連續承接")
 
     if strong_buy_days >= 1:
@@ -853,7 +819,7 @@ def calc_main_force(df):
         main_signals.append("強勢買盤出現")
 
     if strong_buy_days >= 2:
-        main_score += 25
+        main_score += 30
         main_signals.append("強勢買盤進場")
 
     if price_up and volume_up:
@@ -861,11 +827,11 @@ def calc_main_force(df):
         main_signals.append("價漲量增")
 
     if close.iloc[-1] > close.rolling(20).max().iloc[-2] and money.iloc[-1] > ma_money_20.iloc[-1] * 1.3:
-        main_score += 25
+        main_score += 30
         main_signals.append("帶量突破")
 
     if close.iloc[-1] < close.iloc[-2] and volume.iloc[-1] > volume.rolling(20).mean().iloc[-1] * 1.5:
-        main_score -= 20
+        main_score -= 30
         main_signals.append("高量下跌警訊")
 
     return {
@@ -878,7 +844,7 @@ def calc_main_force(df):
 
 
 def analyze_stock(df):
-    if df is None or len(df) < 120:
+    if df is None or len(df) < 140:
         return None
 
     close = df["Close"]
@@ -907,6 +873,7 @@ def analyze_stock(df):
 
     high_20 = high.rolling(20).max().iloc[-2]
     high_60 = high.rolling(60).max().iloc[-2]
+    high_120 = high.rolling(120).max().iloc[-2]
     low_60 = low.rolling(60).min().iloc[-1]
 
     ma20_distance = (price - ma20.iloc[-1]) / ma20.iloc[-1] * 100
@@ -920,8 +887,9 @@ def analyze_stock(df):
     is_near_ma20 = -2 <= ma20_distance <= 6
     is_near_ma60 = -2 <= ma60_distance <= 8
     is_low_start_zone = 5 <= ((price - low_60) / low_60 * 100) <= 45
-    is_volume_warm = vma5.iloc[-1] > vma20.iloc[-1] * 1.2
-    is_volume_strong = vma5.iloc[-1] > vma20.iloc[-1] * 1.6
+    is_volume_warm = vma5.iloc[-1] > vma20.iloc[-1] * 1.25
+    is_volume_strong = vma5.iloc[-1] > vma20.iloc[-1] * 1.7
+    is_liquid = safe_float((close * volume).rolling(20).mean().iloc[-1]) >= 50000000
 
     signals = []
     warnings = []
@@ -941,7 +909,7 @@ def analyze_stock(df):
 
     if is_ma_bull:
         signals.append("中長期多頭排列")
-        score += 25
+        score += 30
 
     spread = abs(ma20.iloc[-1] - ma60.iloc[-1]) / ma60.iloc[-1]
 
@@ -951,11 +919,11 @@ def analyze_stock(df):
 
     if is_break_20:
         signals.append("突破20日高點")
-        score += 20
+        score += 25
 
     if is_break_60:
         signals.append("突破60日高點")
-        score += 25
+        score += 30
 
     if is_volume_warm:
         signals.append("量能增溫")
@@ -963,7 +931,7 @@ def analyze_stock(df):
 
     if is_volume_strong:
         signals.append("主力放量")
-        score += 20
+        score += 25
 
     if 1 <= change_5d <= 15:
         signals.append("短線動能健康")
@@ -981,45 +949,61 @@ def analyze_stock(df):
         signals.append("低中位啟動區")
         score += 15
 
+    if is_liquid:
+        signals.append("成交活躍")
+        score += 10
+
     if change_5d > 22:
         warnings.append("5日漲幅過熱")
-        score -= 30
+        score -= 35
 
     if change_20d > 45:
         warnings.append("20日漲幅過熱")
-        score -= 25
+        score -= 30
 
     if ma20_distance > 12:
         warnings.append("距離月線過遠")
-        score -= 20
+        score -= 25
 
     if ma60_distance > 25:
         warnings.append("距離季線過遠")
-        score -= 20
+        score -= 25
 
     if price < ma20.iloc[-1]:
         warnings.append("跌破月線")
-        score -= 25
+        score -= 35
 
     atr_pct = 0
-
     if atr_now and price:
         atr_pct = atr_now / price * 100
 
     if atr_pct > 10:
         warnings.append("波動過大")
-        score -= 15
+        score -= 20
 
     main_force = calc_main_force(df)
 
     stop_loss = None
     take_profit_1 = None
     take_profit_2 = None
+    risk_reward_ratio = 0
+    upside_space_pct = 0
+    risk_pct = 0
 
     if atr_now:
         stop_loss = round(price - atr_now * 2, 2)
         take_profit_1 = round(price + atr_now * 3, 2)
         take_profit_2 = round(price + atr_now * 5, 2)
+
+        risk_pct = (price - stop_loss) / price * 100
+
+        if high_120 > price:
+            upside_space_pct = (high_120 - price) / price * 100
+        else:
+            upside_space_pct = (take_profit_1 - price) / price * 100
+
+        if risk_pct > 0:
+            risk_reward_ratio = upside_space_pct / risk_pct
 
     return {
         "price": round(price, 2),
@@ -1044,17 +1028,21 @@ def analyze_stock(df):
         "is_low_start_zone": bool(is_low_start_zone),
         "is_volume_warm": bool(is_volume_warm),
         "is_volume_strong": bool(is_volume_strong),
+        "is_liquid": bool(is_liquid),
         "signals": signals,
         "warnings": warnings,
         "stop_loss": stop_loss,
         "take_profit_1": take_profit_1,
         "take_profit_2": take_profit_2,
-        "atr_pct": round(float(atr_pct), 2)
+        "atr_pct": round(float(atr_pct), 2),
+        "risk_pct": round(float(risk_pct), 2),
+        "upside_space_pct": round(float(upside_space_pct), 2),
+        "risk_reward_ratio": round(float(risk_reward_ratio), 2)
     }
 
 
 # ======================
-# 族群強度與輪動排行
+# 族群強度
 # ======================
 def infer_sector(symbol, name, industry):
     if industry and industry not in ["上市", "上櫃", "其他"]:
@@ -1102,7 +1090,7 @@ def calc_sector_scores(items):
         avg_20d = sum(x["change_20d"] for x in arr) / len(arr)
         avg_main = sum(x["main_score"] for x in arr) / len(arr)
         avg_inst = sum(x["inst_score"] for x in arr) / len(arr)
-        strong_count = len([x for x in arr if x["technical_score"] >= 60])
+        strong_count = len([x for x in arr if x["technical_score"] >= 70])
         strong_ratio = strong_count / len(arr)
 
         score = 0
@@ -1119,9 +1107,9 @@ def calc_sector_scores(items):
             score += 10
         if strong_ratio >= 0.4:
             score += 15
-        if avg_main >= 35:
-            score += 10
-        if avg_inst >= 15:
+        if avg_main >= 45:
+            score += 15
+        if avg_inst >= 20:
             score += 10
 
         sector_scores[sector] = {
@@ -1149,146 +1137,6 @@ def build_sector_rankings(sector_scores):
         ranked.append(copied)
 
     return ranked
-
-
-# ======================
-# 買點與進場狀態
-# ======================
-def determine_buy_type_and_entry_status(item):
-    warnings = item.get("warnings", [])
-    main_signals = item.get("main_signals", [])
-    level = item.get("level", "")
-    score = item.get("score", 0)
-
-    is_hot = (
-        level == "HOT" or
-        "距離月線過遠" in warnings or
-        "距離季線過遠" in warnings or
-        "5日漲幅過熱" in warnings or
-        "20日漲幅過熱" in warnings or
-        "高量下跌警訊" in main_signals
-    )
-
-    if "跌破月線" in warnings:
-        return {
-            "buy_type": "弱勢取消型",
-            "entry_status": "跌破取消",
-            "entry_reason": "股價已跌破月線，短線結構轉弱，不建議新進。"
-        }
-
-    if is_hot:
-        return {
-            "buy_type": "過熱觀察型",
-            "entry_status": "過熱不追",
-            "entry_reason": "分數雖高，但距離均線過遠或有過熱警訊，建議等拉回轉穩。"
-        }
-
-    if item.get("is_break_60") and item.get("is_volume_warm") and item.get("money_ratio", 0) >= 1.2:
-        if item.get("ma20_distance", 99) <= 8:
-            return {
-                "buy_type": "突破型",
-                "entry_status": "可觀察進場",
-                "entry_reason": "帶量突破60日高點且距離月線未過遠，屬於較積極的突破買點。"
-            }
-        return {
-            "buy_type": "突破型",
-            "entry_status": "等拉回",
-            "entry_reason": "雖然突破，但距離月線偏遠，建議等量縮回測不破再觀察。"
-        }
-
-    if item.get("is_break_20") and item.get("is_volume_warm"):
-        if item.get("ma20_distance", 99) <= 8:
-            return {
-                "buy_type": "突破型",
-                "entry_status": "可觀察進場",
-                "entry_reason": "突破20日高點並伴隨量能增溫，可列為短線突破觀察。"
-            }
-        return {
-            "buy_type": "突破型",
-            "entry_status": "等拉回",
-            "entry_reason": "突破後距離月線偏遠，追高風險較高。"
-        }
-
-    if item.get("is_ma_bull") and item.get("main_score", 0) >= 60 and item.get("money_ratio", 0) >= 1.2:
-        if item.get("ma20_distance", 99) <= 10:
-            return {
-                "buy_type": "強勢續攻型",
-                "entry_status": "可觀察進場",
-                "entry_reason": "中長期多頭排列且主力資金仍強，屬強勢續攻型。"
-            }
-        return {
-            "buy_type": "強勢續攻型",
-            "entry_status": "等拉回",
-            "entry_reason": "趨勢強但距離月線偏遠，等回測月線或量縮整理較安全。"
-        }
-
-    if item.get("is_near_ma20") and item.get("is_above_ma60") and item.get("technical_score", 0) >= 50:
-        return {
-            "buy_type": "拉回型",
-            "entry_status": "可觀察進場",
-            "entry_reason": "股價接近月線且仍在季線之上，屬拉回不破的觀察買點。"
-        }
-
-    if item.get("is_low_start_zone") and item.get("is_volume_warm") and item.get("main_score", 0) >= 35:
-        return {
-            "buy_type": "低位啟動型",
-            "entry_status": "等突破",
-            "entry_reason": "位階仍不算高且量能轉強，但建議等突破20日高點確認。"
-        }
-
-    if level in ["S", "A"] and score >= 170:
-        return {
-            "buy_type": "趨勢觀察型",
-            "entry_status": "等突破",
-            "entry_reason": "綜合條件不差，但尚未出現明確突破或拉回確認訊號。"
-        }
-
-    return {
-        "buy_type": "觀察型",
-        "entry_status": "僅列觀察",
-        "entry_reason": "條件有部分轉強，但尚未達明確進場型態。"
-    }
-
-
-# ======================
-# 資金控管
-# ======================
-def calc_position_sizing(item):
-    price = item.get("price")
-    stop_loss = item.get("stop_loss")
-
-    if not price or not stop_loss or price <= stop_loss:
-        return {
-            "risk_amount": round(ACCOUNT_SIZE * RISK_PER_TRADE, 0),
-            "risk_per_share": 0,
-            "suggest_shares": 0,
-            "suggest_lots": 0,
-            "position_value": 0,
-            "position_note": "停損價資料不足，無法估算部位。"
-        }
-
-    risk_amount = ACCOUNT_SIZE * RISK_PER_TRADE
-    risk_per_share = price - stop_loss
-    suggest_shares = math.floor(risk_amount / risk_per_share)
-
-    suggest_lots = math.floor(suggest_shares / 1000)
-    position_value = suggest_shares * price
-
-    if suggest_lots <= 0:
-        note = "停損距離較大或股價較高，依單筆風險限制不足一張。"
-    elif suggest_lots >= 5:
-        note = "建議部位偏大，仍應分批建立，不宜一次滿倉。"
-    else:
-        note = "依帳戶風險與停損距離估算的建議部位。"
-
-    return {
-        "risk_amount": round(risk_amount, 0),
-        "risk_per_share": round(risk_per_share, 2),
-        "suggest_shares": suggest_shares,
-        "suggest_lots": suggest_lots,
-        "position_value": round(position_value, 0),
-        "position_note": note
-    }
 
 
 # ======================
@@ -1320,7 +1168,7 @@ def realistic_backtest(df):
 
         simple_score = r["technical_score"] + r["main_score"]
 
-        if simple_score < 120:
+        if simple_score < 130:
             continue
 
         entry_idx = i + 1
@@ -1347,7 +1195,6 @@ def realistic_backtest(df):
             day_low = safe_float(df["Low"].iloc[j])
             day_high = safe_float(df["High"].iloc[j])
             day_close = safe_float(df["Close"].iloc[j])
-
             ma5 = df["Close"].iloc[:j + 1].rolling(5).mean().iloc[-1]
 
             if day_low is not None and day_low <= stop_price:
@@ -1427,58 +1274,254 @@ def realistic_backtest(df):
 
 
 # ======================
-# 分級
+# 買點、檢查分、分級
 # ======================
+def determine_buy_type_and_entry_status(item):
+    warnings = item.get("warnings", [])
+    main_signals = item.get("main_signals", [])
+    level = item.get("level", "")
+
+    is_hot = (
+        level == "HOT" or
+        "距離月線過遠" in warnings or
+        "距離季線過遠" in warnings or
+        "5日漲幅過熱" in warnings or
+        "20日漲幅過熱" in warnings or
+        "高量下跌警訊" in main_signals
+    )
+
+    if "跌破月線" in warnings:
+        return {
+            "buy_type": "弱勢取消型",
+            "entry_status": "跌破取消",
+            "entry_reason": "股價已跌破月線，短線結構轉弱，不建議新進。"
+        }
+
+    if is_hot:
+        return {
+            "buy_type": "過熱觀察型",
+            "entry_status": "過熱不追",
+            "entry_reason": "分數雖高，但距離均線過遠或有過熱警訊，建議等拉回轉穩。"
+        }
+
+    if item.get("is_break_60") and item.get("is_volume_warm") and item.get("money_ratio", 0) >= 1.25:
+        if item.get("ma20_distance", 99) <= 8:
+            return {
+                "buy_type": "突破型",
+                "entry_status": "可觀察進場",
+                "entry_reason": "帶量突破60日高點且距離月線未過遠，屬於較積極的突破買點。"
+            }
+        return {
+            "buy_type": "突破型",
+            "entry_status": "等拉回",
+            "entry_reason": "雖然突破，但距離月線偏遠，建議等量縮回測不破再觀察。"
+        }
+
+    if item.get("is_break_20") and item.get("is_volume_warm"):
+        if item.get("ma20_distance", 99) <= 8:
+            return {
+                "buy_type": "突破型",
+                "entry_status": "可觀察進場",
+                "entry_reason": "突破20日高點並伴隨量能增溫，可列為短線突破觀察。"
+            }
+        return {
+            "buy_type": "突破型",
+            "entry_status": "等拉回",
+            "entry_reason": "突破後距離月線偏遠，追高風險較高。"
+        }
+
+    if item.get("is_ma_bull") and item.get("main_score", 0) >= 65 and item.get("money_ratio", 0) >= 1.25:
+        if item.get("ma20_distance", 99) <= 10:
+            return {
+                "buy_type": "強勢續攻型",
+                "entry_status": "可觀察進場",
+                "entry_reason": "中長期多頭排列且主力資金仍強，屬強勢續攻型。"
+            }
+        return {
+            "buy_type": "強勢續攻型",
+            "entry_status": "等拉回",
+            "entry_reason": "趨勢強但距離月線偏遠，等回測月線或量縮整理較安全。"
+        }
+
+    if item.get("is_near_ma20") and item.get("is_above_ma60") and item.get("technical_score", 0) >= 65:
+        return {
+            "buy_type": "拉回型",
+            "entry_status": "可觀察進場",
+            "entry_reason": "股價接近月線且仍在季線之上，屬拉回不破的觀察買點。"
+        }
+
+    if item.get("is_low_start_zone") and item.get("is_volume_warm") and item.get("main_score", 0) >= 45:
+        return {
+            "buy_type": "低位啟動型",
+            "entry_status": "等突破",
+            "entry_reason": "位階仍不算高且量能轉強，但建議等突破20日高點確認。"
+        }
+
+    return {
+        "buy_type": "觀察型",
+        "entry_status": "僅列觀察",
+        "entry_reason": "條件有部分轉強，但尚未達明確進場型態。"
+    }
+
+
+def calc_entry_check_score(item, market_info):
+    score = 0
+    checks = []
+
+    if market_info.get("allow_new_positions"):
+        score += 15
+        checks.append("大盤環境通過")
+    else:
+        checks.append("大盤環境未通過")
+
+    if item.get("sector_rank", 999) <= 5:
+        score += 15
+        checks.append("族群排名前5")
+    elif item.get("sector_rank", 999) <= 10:
+        score += 8
+        checks.append("族群排名前10")
+    else:
+        checks.append("族群支撐不足")
+
+    if item.get("technical_score", 0) >= 80 and item.get("main_score", 0) >= 55:
+        score += 15
+        checks.append("個股強度通過")
+    else:
+        checks.append("個股強度普通")
+
+    if item.get("is_liquid") and item.get("money_ratio", 0) >= 1.2:
+        score += 10
+        checks.append("活躍度通過")
+    else:
+        checks.append("活躍度不足")
+
+    if item.get("entry_status") in ["可觀察進場", "等拉回", "等突破"]:
+        score += 15
+        checks.append("結構清楚")
+    else:
+        checks.append("結構不清楚")
+
+    if item.get("risk_reward_ratio", 0) >= 2.2:
+        score += 15
+        checks.append("風報比優良")
+    elif item.get("risk_reward_ratio", 0) >= 1.8:
+        score += 8
+        checks.append("風報比尚可")
+    else:
+        checks.append("風報比不足")
+
+    if item.get("stop_loss") and item.get("risk_pct", 99) <= 8:
+        score += 10
+        checks.append("停損明確")
+    elif item.get("stop_loss"):
+        score += 5
+        checks.append("停損偏遠")
+    else:
+        checks.append("停損不明確")
+
+    if item.get("bt_expectancy", 0) > 0 and item.get("bt_profit_factor", 0) >= 1:
+        score += 5
+        checks.append("回測品質通過")
+    else:
+        checks.append("回測品質普通")
+
+    return {
+        "entry_check_score": score,
+        "entry_checks": checks
+    }
+
+
 def classify_stock(item):
     total_score = item["score"]
     main_score = item["main_score"]
     inst_score = item["inst_score"]
     sector_score = item["sector_score"]
     money_ratio = item["money_ratio"]
-    change_5d = item["change_5d"]
-    change_20d = item["change_20d"]
-    atr_pct = item["atr_pct"]
+    rr = item.get("risk_reward_ratio", 0)
+    check_score = item.get("entry_check_score", 0)
     warnings = item["warnings"]
     main_signals = item["main_signals"]
 
-    is_overheated = (
-        change_5d > 22 or
-        change_20d > 45 or
-        atr_pct > 10 or
-        "5日漲幅過熱" in warnings or
-        "20日漲幅過熱" in warnings or
+    invalid = (
+        "跌破月線" in warnings or
+        "高量下跌警訊" in main_signals or
         "距離月線過遠" in warnings or
-        "距離季線過遠" in warnings or
-        "高量下跌警訊" in main_signals
+        "距離季線過遠" in warnings
     )
 
-    if is_overheated and total_score >= 150:
-        return "HOT"
+    if invalid:
+        return None
 
     if (
-        total_score >= 210 and
-        main_score >= 60 and
+        total_score >= 225 and
+        main_score >= 65 and
         inst_score >= 20 and
         sector_score >= 20 and
-        money_ratio >= 1.25
+        money_ratio >= 1.25 and
+        rr >= 2.0 and
+        check_score >= 80 and
+        item.get("sector_rank", 999) <= 8
     ):
         return "S"
 
     if (
-        total_score >= 170 and
-        main_score >= 35 and
-        sector_score >= 10 and
-        money_ratio >= 1.1
+        total_score >= 190 and
+        main_score >= 45 and
+        sector_score >= 15 and
+        money_ratio >= 1.15 and
+        rr >= 1.6 and
+        check_score >= 68
     ):
         return "A"
 
-    if (
-        total_score >= 135 and
-        (main_score >= 20 or inst_score >= 15 or sector_score >= 15)
-    ):
-        return "B"
-
     return None
+
+
+def calc_position_sizing(item):
+    price = item.get("price")
+    stop_loss = item.get("stop_loss")
+
+    if not price or not stop_loss or price <= stop_loss:
+        return {
+            "risk_amount": round(ACCOUNT_SIZE * RISK_PER_TRADE, 0),
+            "risk_per_share": 0,
+            "suggest_shares": 0,
+            "suggest_lots": 0,
+            "position_value": 0,
+            "position_note": "停損價資料不足，無法估算部位。"
+        }
+
+    risk_amount = ACCOUNT_SIZE * RISK_PER_TRADE
+    risk_per_share = price - stop_loss
+    suggest_shares = math.floor(risk_amount / risk_per_share)
+    suggest_lots = math.floor(suggest_shares / 1000)
+    position_value = suggest_shares * price
+
+    if item.get("entry_status") == "等拉回":
+        suggest_shares = math.floor(suggest_shares * 0.6)
+        suggest_lots = math.floor(suggest_shares / 1000)
+        position_value = suggest_shares * price
+        note = "等拉回型，建議降低首筆部位，等確認再加碼。"
+    elif item.get("entry_status") == "等突破":
+        suggest_shares = math.floor(suggest_shares * 0.5)
+        suggest_lots = math.floor(suggest_shares / 1000)
+        position_value = suggest_shares * price
+        note = "等突破型，尚未確認，建議小部位觀察。"
+    elif suggest_lots <= 0:
+        note = "停損距離較大或股價較高，依單筆風險限制不足一張。"
+    elif suggest_lots >= 5:
+        note = "建議部位偏大，仍應分批建立，不宜一次滿倉。"
+    else:
+        note = "依帳戶風險與停損距離估算的建議部位。"
+
+    return {
+        "risk_amount": round(risk_amount, 0),
+        "risk_per_share": round(risk_per_share, 2),
+        "suggest_shares": suggest_shares,
+        "suggest_lots": suggest_lots,
+        "position_value": round(position_value, 0),
+        "position_note": note
+    }
 
 
 def build_elite_results(s_results, a_results, market_info):
@@ -1489,40 +1532,50 @@ def build_elite_results(s_results, a_results, market_info):
 
     for item in s_results:
         copied = dict(item)
-        copied["elite_reason"] = "S級優先，分數、資金、法人與族群條件較佳。"
+        copied["elite_reason"] = "S級核心候選，通過高標準進場檢查。"
         pool.append(copied)
 
     if market_info.get("risk_switch") != "只允許S級":
         for item in a_results:
             copied = dict(item)
-            copied["elite_reason"] = "A級補選，適合等待突破或拉回。"
+            copied["elite_reason"] = "高分A級候選，仍需依買點等待突破或拉回。"
             pool.append(copied)
 
     def elite_score(x):
         bonus = 0
 
         if x.get("entry_status") == "可觀察進場":
-            bonus += 18
+            bonus += 25
         elif x.get("entry_status") == "等拉回":
-            bonus += 8
+            bonus += 12
         elif x.get("entry_status") == "等突破":
-            bonus += 5
+            bonus += 8
 
+        if x.get("entry_check_score", 0) >= 85:
+            bonus += 20
+        if x.get("risk_reward_ratio", 0) >= 2.2:
+            bonus += 15
         if x.get("bt_expectancy", 0) > 0:
             bonus += 10
         if x.get("bt_winrate", 0) >= 50:
             bonus += 10
         if x.get("trust_days", 0) >= 3:
-            bonus += 8
-        if x.get("sector_rank", 999) <= 5:
             bonus += 10
+        if x.get("sector_rank", 999) <= 5:
+            bonus += 15
 
         return x.get("score", 0) + bonus
 
     filtered = []
 
     for x in pool:
-        if x.get("entry_status") in ["過熱不追", "跌破取消"]:
+        if x.get("entry_status") in ["過熱不追", "跌破取消", "僅列觀察"]:
+            continue
+        if x.get("entry_check_score", 0) < 75:
+            continue
+        if x.get("risk_reward_ratio", 0) < 1.8:
+            continue
+        if x.get("sector_rank", 999) > 10:
             continue
         if "高量下跌警訊" in x.get("main_signals", []):
             continue
@@ -1533,7 +1586,7 @@ def build_elite_results(s_results, a_results, market_info):
 
 
 # ======================
-# 交易日誌與統計
+# 追蹤、持有管理、交易統計
 # ======================
 def load_track():
     return read_json_file(TRACK_FILE, [])
@@ -1572,11 +1625,14 @@ def calc_trade_log_stats(logs):
             "trade_winrate": 0,
             "trade_avg_return": 0,
             "best_buy_type": "-",
-            "best_level": "-"
+            "best_level": "-",
+            "best_check_score": 0,
+            "avg_hold_days": 0
         }
 
     wins = [x for x in closed if x["pnl_pct"] > 0]
     avg = sum(x["pnl_pct"] for x in closed) / len(closed)
+    avg_hold = sum(x.get("hold_days", 0) for x in closed) / len(closed)
 
     by_type = {}
     by_level = {}
@@ -1592,28 +1648,111 @@ def calc_trade_log_stats(logs):
     best_buy_avg = -999
 
     for k, vals in by_type.items():
-        if len(vals) >= 1:
-            v = sum(vals) / len(vals)
-            if v > best_buy_avg:
-                best_buy_avg = v
-                best_buy_type = k
+        v = sum(vals) / len(vals)
+        if v > best_buy_avg:
+            best_buy_avg = v
+            best_buy_type = k
 
     best_level = "-"
     best_level_avg = -999
 
     for k, vals in by_level.items():
-        if len(vals) >= 1:
-            v = sum(vals) / len(vals)
-            if v > best_level_avg:
-                best_level_avg = v
-                best_level = k
+        v = sum(vals) / len(vals)
+        if v > best_level_avg:
+            best_level_avg = v
+            best_level = k
+
+    best_check_score = round(
+        sum(x.get("entry_check_score", 0) for x in closed) / len(closed),
+        1
+    )
 
     return {
         "trade_count": len(closed),
         "trade_winrate": round(len(wins) / len(closed) * 100, 2),
         "trade_avg_return": round(avg, 2),
         "best_buy_type": best_buy_type,
-        "best_level": best_level
+        "best_level": best_level,
+        "best_check_score": best_check_score,
+        "avg_hold_days": round(avg_hold, 1)
+    }
+
+
+def analyze_holding(track_item, current_price, df):
+    entry_price = track_item.get("price", 0)
+    stop_loss = track_item.get("stop_loss", 0)
+    take1 = track_item.get("take_profit_1", 0)
+    take2 = track_item.get("take_profit_2", 0)
+
+    if not entry_price or current_price == "-":
+        return {
+            "holding_advice": "-",
+            "trailing_stop": "-",
+            "holding_reason": "-"
+        }
+
+    pnl = (current_price - entry_price) / entry_price * 100
+
+    trailing_stop = stop_loss
+    advice = "持有"
+    reason = "尚未達到停利或停損條件，依原策略持有。"
+
+    try:
+        close = df["Close"]
+        volume = df["Volume"]
+        ma5 = close.rolling(5).mean().iloc[-1]
+        ma20 = close.rolling(20).mean().iloc[-1]
+        vma20 = volume.rolling(20).mean().iloc[-1]
+        last_volume = volume.iloc[-1]
+        prev_close = close.iloc[-2]
+    except Exception:
+        ma5 = None
+        ma20 = None
+        vma20 = None
+        last_volume = None
+        prev_close = None
+
+    if pnl >= 18:
+        trailing_stop = max(trailing_stop, round(entry_price * 1.10, 2))
+        advice = "移動停利"
+        reason = "獲利超過18%，停損上移到至少+10%，避免大賺回吐。"
+    elif pnl >= 12:
+        trailing_stop = max(trailing_stop, round(entry_price * 1.05, 2))
+        advice = "移動停利"
+        reason = "獲利超過12%，停損上移到至少+5%，保護波段利潤。"
+    elif pnl >= 8:
+        trailing_stop = max(trailing_stop, round(entry_price, 2))
+        advice = "移動停損"
+        reason = "獲利超過8%，停損上移到成本，避免獲利單轉虧損。"
+
+    if take2 and current_price >= take2:
+        advice = "第二階段停利"
+        reason = "股價已達第二階段停利，建議至少部分結案或大幅提高移動停利。"
+    elif take1 and current_price >= take1 and pnl >= 8:
+        advice = "第一階段停利"
+        reason = "股價已達第一階段停利，可部分停利並提高剩餘部位停損。"
+
+    if ma5 is not None and pnl > 8 and current_price < ma5:
+        advice = "部分停利"
+        reason = "已有明顯獲利但跌破5日線，建議部分停利或提高防守。"
+
+    if ma20 is not None and current_price < ma20:
+        advice = "建議結案"
+        reason = "股價跌破月線，結構轉弱，建議結案或至少降部位。"
+
+    if last_volume is not None and vma20 is not None and prev_close is not None:
+        if current_price < prev_close and last_volume > vma20 * 1.5:
+            advice = "風險升高"
+            reason = "出現高量下跌，代表籌碼可能鬆動，建議提高防守或結案。"
+
+    if current_price <= trailing_stop:
+        advice = "建議結案"
+        reason = "股價已觸及移動停損 / 停利保護價，建議執行紀律。"
+
+    return {
+        "holding_advice": advice,
+        "trailing_stop": round(trailing_stop, 2) if trailing_stop else "-",
+        "holding_reason": reason
     }
 
 
@@ -1637,13 +1776,9 @@ def load_scan_results():
         "elite_count": 0,
         "s_count": 0,
         "a_count": 0,
-        "b_count": 0,
-        "hot_count": 0,
         "elite_results": [],
         "s_results": [],
         "a_results": [],
-        "b_results": [],
-        "hot_results": [],
         "sector_rankings": []
     })
 
@@ -1653,7 +1788,6 @@ def load_scan_results():
 # ======================
 def scan_market():
     save_scan_status("running", "正在建立全市場股票池，請稍後重新整理。")
-    print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
     inst_data = fetch_institutional_data()
@@ -1722,6 +1856,7 @@ def scan_market():
                 "is_low_start_zone": result["is_low_start_zone"],
                 "is_volume_warm": result["is_volume_warm"],
                 "is_volume_strong": result["is_volume_strong"],
+                "is_liquid": result["is_liquid"],
 
                 "signals": result["signals"],
                 "warnings": result["warnings"],
@@ -1730,6 +1865,9 @@ def scan_market():
                 "take_profit_1": result["take_profit_1"],
                 "take_profit_2": result["take_profit_2"],
                 "atr_pct": result["atr_pct"],
+                "risk_pct": result["risk_pct"],
+                "upside_space_pct": result["upside_space_pct"],
+                "risk_reward_ratio": result["risk_reward_ratio"],
 
                 "market_status": market_status,
                 "risk_mode": risk_mode
@@ -1750,10 +1888,7 @@ def scan_market():
     sector_rankings = build_sector_rankings(sector_scores)
     sector_rank_map = {x["sector"]: x["rank"] for x in sector_rankings}
 
-    s_results = []
-    a_results = []
-    b_results = []
-    hot_results = []
+    candidate_items = []
 
     for item in analyzed:
         sector_data = sector_scores.get(item["sector"], {
@@ -1784,14 +1919,21 @@ def scan_market():
             1
         )
 
+        trade_plan = determine_buy_type_and_entry_status(item)
+        item.update(trade_plan)
+
+        bt = realistic_backtest(item["df"])
+        item.update(bt)
+
+        check = calc_entry_check_score(item, market_info)
+        item.update(check)
+
         level = classify_stock(item)
 
         if not level:
             continue
 
         item["level"] = level
-        item.update(determine_buy_type_and_entry_status(item))
-        item.update(realistic_backtest(item["df"]))
         item.update(calc_position_sizing(item))
 
         if not market_info.get("allow_new_positions"):
@@ -1799,20 +1941,13 @@ def scan_market():
             item["entry_reason"] = market_info.get("risk_note", "市場風險偏高，禁止新倉。")
 
         item.pop("df", None)
+        candidate_items.append(item)
 
-        if level == "S":
-            s_results.append(item)
-        elif level == "A":
-            a_results.append(item)
-        elif level == "B":
-            b_results.append(item)
-        elif level == "HOT":
-            hot_results.append(item)
+    s_results = [x for x in candidate_items if x["level"] == "S"]
+    a_results = [x for x in candidate_items if x["level"] == "A"]
 
     s_results = sorted(s_results, key=lambda x: x["score"], reverse=True)
     a_results = sorted(a_results, key=lambda x: x["score"], reverse=True)
-    b_results = sorted(b_results, key=lambda x: x["score"], reverse=True)
-    hot_results = sorted(hot_results, key=lambda x: x["score"], reverse=True)
 
     elite_results = build_elite_results(s_results, a_results, market_info)
 
@@ -1829,14 +1964,10 @@ def scan_market():
         "elite_count": len(elite_results),
         "s_count": len(s_results),
         "a_count": len(a_results),
-        "b_count": len(b_results),
-        "hot_count": len(hot_results),
 
         "elite_results": elite_results,
         "s_results": s_results[:MAX_S_RESULTS],
         "a_results": a_results[:MAX_A_RESULTS],
-        "b_results": b_results[:MAX_B_RESULTS],
-        "hot_results": hot_results[:MAX_HOT_RESULTS],
         "sector_rankings": sector_rankings
     }
 
@@ -1844,7 +1975,7 @@ def scan_market():
 
     save_scan_status(
         "done",
-        f"掃描完成：股票池 {total} 檔，今日精選 {len(elite_results)} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔，B級 {len(b_results)} 檔，過熱 {len(hot_results)} 檔。"
+        f"掃描完成：股票池 {total} 檔，今日精選 {len(elite_results)} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔。"
     )
 
 
@@ -1861,7 +1992,7 @@ def index():
     trade_logs = load_trade_log()
 
     for t in tracks:
-        df = download_stock(t["symbol"], "5d")
+        df = download_stock(t["symbol"], "3mo")
 
         try:
             curr = safe_float(df["Close"].iloc[-1])
@@ -1870,12 +2001,19 @@ def index():
             t["curr"] = round(curr, 2)
             t["pnl"] = round(pnl, 2)
 
-            if t.get("stop_loss") and curr <= t["stop_loss"]:
+            holding = analyze_holding(t, curr, df)
+            t.update(holding)
+
+            if curr <= t.get("stop_loss", 0):
                 t["signal"] = "停損"
             elif t.get("take_profit_2") and curr >= t["take_profit_2"]:
                 t["signal"] = "第二階段停利"
             elif t.get("take_profit_1") and curr >= t["take_profit_1"]:
                 t["signal"] = "第一階段停利"
+            elif t.get("holding_advice") == "建議結案":
+                t["signal"] = "建議結案"
+            elif t.get("holding_advice") == "移動停利":
+                t["signal"] = "移動停利"
             elif pnl <= -5:
                 t["signal"] = "風險警戒"
             elif pnl >= 10:
@@ -1887,6 +2025,9 @@ def index():
             t["curr"] = "-"
             t["pnl"] = "-"
             t["signal"] = "-"
+            t["holding_advice"] = "-"
+            t["trailing_stop"] = "-"
+            t["holding_reason"] = "-"
 
     winrate, avg = calc_track_stats(tracks)
     trade_stats = calc_trade_log_stats(trade_logs)
@@ -1907,14 +2048,10 @@ def index():
         elite_count=scan_data.get("elite_count", 0),
         s_count=scan_data.get("s_count", 0),
         a_count=scan_data.get("a_count", 0),
-        b_count=scan_data.get("b_count", 0),
-        hot_count=scan_data.get("hot_count", 0),
 
         elite_results=scan_data.get("elite_results", []),
         s_results=scan_data.get("s_results", []),
         a_results=scan_data.get("a_results", []),
-        b_results=scan_data.get("b_results", []),
-        hot_results=scan_data.get("hot_results", []),
         sector_rankings=scan_data.get("sector_rankings", []),
 
         scan_status=scan_status_data.get("status", "idle"),
@@ -1933,7 +2070,7 @@ def index():
 
 
 # ======================
-# 手動背景掃描
+# 掃描
 # ======================
 @app.route("/scan-now")
 def scan_now():
@@ -1969,9 +2106,7 @@ def track(symbol, name, price, stop_loss, take1, take2):
     all_items = (
         scan_data.get("elite_results", []) +
         scan_data.get("s_results", []) +
-        scan_data.get("a_results", []) +
-        scan_data.get("b_results", []) +
-        scan_data.get("hot_results", [])
+        scan_data.get("a_results", [])
     )
 
     source_item = next((x for x in all_items if x["symbol"] == symbol), {})
@@ -1988,8 +2123,11 @@ def track(symbol, name, price, stop_loss, take1, take2):
             "level": source_item.get("level", "-"),
             "buy_type": source_item.get("buy_type", "-"),
             "entry_status": source_item.get("entry_status", "-"),
+            "entry_check_score": source_item.get("entry_check_score", 0),
+            "risk_reward_ratio": source_item.get("risk_reward_ratio", 0),
             "score": source_item.get("score", 0),
-            "sector": source_item.get("sector", "-")
+            "sector": source_item.get("sector", "-"),
+            "sector_rank": source_item.get("sector_rank", 999)
         })
 
     save_track(data)
@@ -2019,6 +2157,9 @@ def close_trade(symbol):
     entry = float(item["price"])
     pnl_pct = (curr - entry) / entry * 100
 
+    entry_date = parse_date(item.get("date", today_str()))
+    hold_days = (datetime.now(TAIWAN_TZ).date() - entry_date).days
+
     logs.append({
         "symbol": item["symbol"],
         "name": item["name"],
@@ -2027,11 +2168,15 @@ def close_trade(symbol):
         "pnl_pct": round(pnl_pct, 2),
         "entry_date": item.get("date", "-"),
         "exit_date": today_str(),
+        "hold_days": hold_days,
         "level": item.get("level", "-"),
         "buy_type": item.get("buy_type", "-"),
         "entry_status": item.get("entry_status", "-"),
+        "entry_check_score": item.get("entry_check_score", 0),
+        "risk_reward_ratio": item.get("risk_reward_ratio", 0),
         "score": item.get("score", 0),
-        "sector": item.get("sector", "-")
+        "sector": item.get("sector", "-"),
+        "sector_rank": item.get("sector_rank", 999)
     })
 
     tracks = [x for x in tracks if x["symbol"] != symbol]
