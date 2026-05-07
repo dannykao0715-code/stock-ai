@@ -59,16 +59,6 @@ hr {
     font-weight: 900;
 }
 
-.level-b {
-    color: #22c55e;
-    font-weight: 900;
-}
-
-.level-hot {
-    color: #fb7185;
-    font-weight: 900;
-}
-
 .elite-title {
     color: #facc15;
     font-weight: 900;
@@ -233,14 +223,6 @@ hr {
     border-color: #38bdf8;
 }
 
-.level-card-b {
-    border-color: #22c55e;
-}
-
-.level-card-hot {
-    border-color: #fb7185;
-}
-
 .metric-box {
     background: #0f172a;
     border: 1px solid #334155;
@@ -290,6 +272,7 @@ hr {
 
 <div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
 <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
+
 <div class="info-line">
     🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
     風險開關：
@@ -299,9 +282,10 @@ hr {
         <span class="risk-off">{{ risk_switch }}</span>
     {% endif %}
 </div>
+
 <div class="info-line">
-    📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 
-    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
+    📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜
+    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}
 </div>
 
 <div class="my-3">
@@ -353,9 +337,9 @@ hr {
 </div>
 
 <div class="alert alert-secondary">
-    本金設定：{{ account_size }} 元 ｜ 單筆風險：{{ risk_per_trade }}% ｜ 
-    已結案交易：{{ trade_stats.trade_count }} 筆 ｜ 
-    最佳買點類型：{{ trade_stats.best_buy_type }} ｜ 
+    本金設定：{{ account_size }} 元 ｜ 單筆風險：{{ risk_per_trade }}% ｜
+    已結案交易：{{ trade_stats.trade_count }} 筆 ｜
+    最佳買點類型：{{ trade_stats.best_buy_type }} ｜
     最佳等級：{{ trade_stats.best_level }}
 </div>
 
@@ -589,6 +573,8 @@ hr {
             <div class="small-text">{{ r.candle_note }}</div>
             <hr>
             <div>突破狀態：<span class="good">{{ r.breakout_state }}</span></div>
+            <div>20日前高：{{ r.prev_high_20 }}</div>
+            <div>60日前高：{{ r.prev_high_60 }}</div>
             <div>前高壓力：{{ r.breakout_level }}</div>
             <div>回採低點：{{ r.pullback_low }}</div>
             <div class="small-text">{{ r.breakout_note }}</div>
@@ -718,7 +704,7 @@ hr {
 {% endif %}
 {% endmacro %}
 
-{{ stock_cards(elite_results, "🎯 今日精選｜最多 5 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
+{{ stock_cards(elite_results, "🎯 今日精選｜最多 3 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
 
 <hr>
 
@@ -730,16 +716,8 @@ hr {
 
 <hr>
 
-{{ stock_cards(b_results, "🟢 B級｜觀察名單", "level-b", "level-card-b", "目前沒有 B 級股票。") }}
-
-<hr>
-
-{{ stock_cards(hot_results, "🔥 過熱區｜分數高但不建議追高", "level-hot", "level-card-hot", "目前沒有過熱警示股票。") }}
-
-<hr>
-
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本已整合突破回採、雞蛋理論位階、波段位置、K棒型態、明確進場點、確認點、停損點與移動停利點。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本已整合突破回採、雞蛋位階、K棒確認、波段位置、明確進場點、確認點、停損點與移動停利點，並只顯示今日精選、S級與A級。
 </div>
 
 </div>
