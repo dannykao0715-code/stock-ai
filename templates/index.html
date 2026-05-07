@@ -336,6 +336,8 @@ hr {
         <div>移動停利：<span class="good">{{ a.trailing_stop }}</span></div>
         <div>風報比：{{ a.risk_reward }}</div>
         <div>進場檢查分：{{ a.entry_check_score }}</div>
+        <div>法人強度：{{ a.inst_strength_level }} ｜ 法人買超強度：{{ a.total_inst_intensity }}%</div>
+        <div>流動性：{{ a.liquidity_level }} ｜ 20日均量：{{ a.avg_volume_20_lots }} 張</div>
         <div class="small-text mt-2">{{ a.alert_note }}</div>
         <a href="/track-candidate/{{ a.symbol }}" class="btn btn-warning mt-3">加入追蹤</a>
     </div>
@@ -365,9 +367,10 @@ hr {
 <th>進場點</th>
 <th>停損</th>
 <th>風報比</th>
+<th>法人強度</th>
+<th>流動性</th>
 <th>位階</th>
 <th>K棒</th>
-<th>波段</th>
 <th>操作</th>
 </tr>
 </thead>
@@ -390,9 +393,10 @@ hr {
 <td>{{ c.entry_price }}</td>
 <td class="bad">{{ c.initial_stop }}</td>
 <td>{{ c.risk_reward }}</td>
+<td>{{ c.inst_strength_level }}<br><span class="small-text">{{ c.total_inst_intensity }}%</span></td>
+<td>{{ c.liquidity_level }}<br><span class="small-text">{{ c.avg_volume_20_lots }}張</span></td>
 <td>{{ c.egg_zone }}</td>
 <td>{{ c.candle_signal }}</td>
-<td>{{ c.wave_stage }}</td>
 <td><a href="/track-candidate/{{ c.symbol }}" class="btn btn-warning btn-sm">追蹤</a></td>
 </tr>
 {% endfor %}
@@ -440,6 +444,119 @@ hr {
 
 <hr>
 
+<h4 class="section-title">📊 策略統計儀表板</h4>
+
+<div class="alert alert-info">
+    {{ strategy_dashboard.best_strategy_note }}<br>
+    {{ strategy_dashboard.worst_strategy_note }}
+</div>
+
+<div class="row">
+    <div class="col-lg-4 mb-3">
+        <div class="card p-3 h-100">
+            <h5>依等級統計</h5>
+            {% if strategy_dashboard.by_level %}
+            <div class="table-responsive">
+            <table class="table table-dark table-bordered">
+            <thead>
+            <tr>
+                <th>等級</th>
+                <th>筆數</th>
+                <th>勝率</th>
+                <th>均報酬</th>
+                <th>期望值</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for x in strategy_dashboard.by_level %}
+            <tr>
+                <td>{{ x.name }}</td>
+                <td>{{ x.count }}</td>
+                <td>{{ x.winrate }}%</td>
+                <td>{{ x.avg_return }}%</td>
+                <td>{{ x.expectancy }}%</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="small-text">尚無資料。</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+        <div class="card p-3 h-100">
+            <h5>依買點類型統計</h5>
+            {% if strategy_dashboard.by_buy_type %}
+            <div class="table-responsive">
+            <table class="table table-dark table-bordered">
+            <thead>
+            <tr>
+                <th>買點</th>
+                <th>筆數</th>
+                <th>勝率</th>
+                <th>均報酬</th>
+                <th>期望值</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for x in strategy_dashboard.by_buy_type %}
+            <tr>
+                <td>{{ x.name }}</td>
+                <td>{{ x.count }}</td>
+                <td>{{ x.winrate }}%</td>
+                <td>{{ x.avg_return }}%</td>
+                <td>{{ x.expectancy }}%</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="small-text">尚無資料。</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+        <div class="card p-3 h-100">
+            <h5>依族群統計</h5>
+            {% if strategy_dashboard.by_sector %}
+            <div class="table-responsive">
+            <table class="table table-dark table-bordered">
+            <thead>
+            <tr>
+                <th>族群</th>
+                <th>筆數</th>
+                <th>勝率</th>
+                <th>均報酬</th>
+                <th>期望值</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for x in strategy_dashboard.by_sector %}
+            <tr>
+                <td>{{ x.name }}</td>
+                <td>{{ x.count }}</td>
+                <td>{{ x.winrate }}%</td>
+                <td>{{ x.avg_return }}%</td>
+                <td>{{ x.expectancy }}%</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="small-text">尚無資料。</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<hr>
+
 <h4 class="section-title">📊 績效與資金控管總覽</h4>
 
 <div class="row mb-3">
@@ -475,6 +592,7 @@ hr {
 <div class="alert alert-secondary">
     本金設定：{{ account_size }} 元 ｜ 原始單筆風險：{{ risk_per_trade }}% ｜
     市場調整部位倍率：{{ risk_multiplier }} ｜
+    流動性門檻：20日均量至少 {{ min_avg_volume_lots }} 張、20日均成交金額至少 {{ min_avg_amount }} 元 ｜
     已結案交易：{{ trade_stats.trade_count }} 筆 ｜
     最佳買點類型：{{ trade_stats.best_buy_type }} ｜
     最佳等級：{{ trade_stats.best_level }}
@@ -496,6 +614,7 @@ hr {
 <th>20日均漲幅</th>
 <th>主力均分</th>
 <th>法人均分</th>
+<th>流動性均分</th>
 <th>強勢比例</th>
 <th>樣本數</th>
 </tr>
@@ -510,6 +629,7 @@ hr {
 <td>{{ s.sector_avg_20d }}%</td>
 <td>{{ s.sector_avg_main }}</td>
 <td>{{ s.sector_avg_inst }}</td>
+<td>{{ s.sector_avg_liquidity }}</td>
 <td>{{ s.sector_strong_ratio }}%</td>
 <td>{{ s.sector_stock_count }}</td>
 </tr>
@@ -612,6 +732,9 @@ hr {
 <th>損益</th>
 <th>等級</th>
 <th>買點</th>
+<th>族群</th>
+<th>法人強度</th>
+<th>流動性</th>
 <th>位階</th>
 <th>波段</th>
 <th>K棒</th>
@@ -639,6 +762,9 @@ hr {
 </td>
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
+<td>{{ t.sector }}</td>
+<td>{{ t.inst_strength_level }}</td>
+<td>{{ t.liquidity_level }}</td>
 <td>{{ t.egg_zone }}</td>
 <td>{{ t.wave_stage }}</td>
 <td>{{ t.candle_signal }}</td>
@@ -732,9 +858,41 @@ hr {
             <div>主力資金分：<span class="purple">{{ r.main_score }}</span></div>
             <div>法人籌碼分：<span class="good">{{ r.inst_score }}</span></div>
             <div>族群強度分：<span class="warning">{{ r.sector_score }}</span></div>
+            <div>流動性分：<span class="blue">{{ r.liquidity_score }}</span></div>
             <div>進場檢查分：<span class="warning">{{ r.entry_check_score }}</span></div>
             <div>風報比：<span class="good">{{ r.risk_reward }}</span></div>
         </div>
+
+        <hr>
+
+        <div class="small-text">法人籌碼強度</div>
+        <div>法人強度等級：<span class="warning">{{ r.inst_strength_level }}</span></div>
+        <div>法人合計淨買賣：{{ r.total_net }}</div>
+        <div>法人買超強度：{{ r.total_inst_intensity }}%</div>
+        <div>外資強度：{{ r.foreign_intensity }}%</div>
+        <div>投信強度：{{ r.trust_intensity }}%</div>
+        <div>自營商強度：{{ r.dealer_intensity }}%</div>
+
+        <div class="mt-2">
+            {% for s in r.inst_signals %}
+                <span class="badge badge-inst">{{ s }}</span>
+            {% endfor %}
+        </div>
+
+        <hr>
+
+        <div class="small-text">流動性過濾</div>
+        <div>流動性等級：<span class="blue">{{ r.liquidity_level }}</span></div>
+        <div>5日均量：{{ r.avg_volume_5 }}</div>
+        <div>20日均量：{{ r.avg_volume_20_lots }} 張</div>
+        <div>20日均成交金額：{{ r.avg_amount_20 }}</div>
+        {% if r.liquidity_warnings %}
+        <div class="mt-2">
+            {% for w in r.liquidity_warnings %}
+                <span class="badge badge-warn">{{ w }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
 
         <hr>
 
@@ -764,20 +922,6 @@ hr {
         <div class="mt-2">
             {% for s in r.main_signals %}
                 <span class="badge badge-main">{{ s }}</span>
-            {% endfor %}
-        </div>
-
-        <hr>
-
-        <div class="small-text">法人籌碼</div>
-        <div>外資買超天數：{{ r.foreign_days }}</div>
-        <div>投信買超天數：{{ r.trust_days }}</div>
-        <div>自營商買超天數：{{ r.dealer_days }}</div>
-        <div>法人合計淨買賣：{{ r.total_net }}</div>
-
-        <div class="mt-2">
-            {% for s in r.inst_signals %}
-                <span class="badge badge-inst">{{ s }}</span>
             {% endfor %}
         </div>
 
@@ -862,7 +1006,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本已加入AI候選追蹤池、今日進場提醒、候選失效提醒、進場後最高價動態移動停利、突破回採策略本體回測、市場狀態調整部位與同族群集中風險限制。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本新增法人買超強度、投信買超強度、外資買超強度、流動性過濾與策略統計儀表板。
 </div>
 
 </div>
