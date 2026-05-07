@@ -72,6 +72,9 @@ FEE_RATE = 0.001425 * 0.28
 TAX_RATE = 0.003
 SLIPPAGE_RATE = 0.001
 
+MIN_AVG_VOLUME_20 = 500_000
+MIN_AVG_AMOUNT_20 = 5_000_000
+
 is_scanning = False
 
 
@@ -709,7 +712,7 @@ def fetch_institutional_data():
         return {}
 
 
-def calc_institutional_score(symbol, inst_data):
+def calc_institutional_score(symbol, inst_data, avg_volume_5=0):
     code = symbol.split(".")[0]
     data = inst_data.get(code)
 
@@ -720,7 +723,15 @@ def calc_institutional_score(symbol, inst_data):
             "foreign_days": 0,
             "trust_days": 0,
             "dealer_days": 0,
-            "total_net": 0
+            "total_net": 0,
+            "foreign_net": 0,
+            "trust_net": 0,
+            "dealer_net": 0,
+            "foreign_intensity": 0,
+            "trust_intensity": 0,
+            "dealer_intensity": 0,
+            "total_inst_intensity": 0,
+            "inst_strength_level": "無資料"
         }
 
     score = 0
@@ -732,14 +743,28 @@ def calc_institutional_score(symbol, inst_data):
 
     foreign_net = data.get("foreign_net", 0)
     trust_net = data.get("trust_net", 0)
+    dealer_net = data.get("dealer_net", 0)
     total_net = data.get("total_net", 0)
 
+    avg_volume_5 = avg_volume_5 or 0
+
+    if avg_volume_5 > 0:
+        foreign_intensity = foreign_net / avg_volume_5 * 100
+        trust_intensity = trust_net / avg_volume_5 * 100
+        dealer_intensity = dealer_net / avg_volume_5 * 100
+        total_inst_intensity = total_net / avg_volume_5 * 100
+    else:
+        foreign_intensity = 0
+        trust_intensity = 0
+        dealer_intensity = 0
+        total_inst_intensity = 0
+
     if foreign_days >= 3:
-        score += 15
+        score += 12
         signals.append("外資連買")
 
     if trust_days >= 3:
-        score += 30
+        score += 25
         signals.append("投信連買")
 
     if trust_days >= 5:
@@ -747,37 +772,76 @@ def calc_institutional_score(symbol, inst_data):
         signals.append("投信連買5日以上")
 
     if dealer_days >= 3:
-        score += 10
+        score += 8
         signals.append("自營商偏多")
 
     if total_net > 0:
-        score += 15
+        score += 10
         signals.append("三大法人合計買超")
 
     if foreign_net > 0 and trust_net > 0:
-        score += 20
+        score += 18
         signals.append("外資投信同步買超")
 
-    if trust_net > 0 and trust_days >= 2:
+    if total_inst_intensity >= 3:
+        score += 12
+        signals.append("法人買超強度高")
+
+    if total_inst_intensity >= 6:
+        score += 18
+        signals.append("法人買超強度極高")
+
+    if trust_intensity >= 1:
         score += 10
-        signals.append("投信買盤延續")
+        signals.append("投信買超具強度")
+
+    if trust_intensity >= 3:
+        score += 18
+        signals.append("投信買超強勢")
+
+    if foreign_intensity >= 3:
+        score += 10
+        signals.append("外資買超具強度")
 
     if total_net < 0:
-        score -= 20
+        score -= 18
         signals.append("法人合計賣超")
 
+    if total_inst_intensity < -3:
+        score -= 15
+        signals.append("法人賣超強度偏高")
+
+    if total_inst_intensity >= 6:
+        strength_level = "極強"
+    elif total_inst_intensity >= 3:
+        strength_level = "強"
+    elif total_inst_intensity > 0:
+        strength_level = "偏多"
+    elif total_inst_intensity <= -3:
+        strength_level = "偏空"
+    else:
+        strength_level = "普通"
+
     return {
-        "inst_score": score,
+        "inst_score": round(score, 1),
         "inst_signals": signals,
         "foreign_days": foreign_days,
         "trust_days": trust_days,
         "dealer_days": dealer_days,
-        "total_net": round(total_net, 0)
+        "total_net": round(total_net, 0),
+        "foreign_net": round(foreign_net, 0),
+        "trust_net": round(trust_net, 0),
+        "dealer_net": round(dealer_net, 0),
+        "foreign_intensity": round(foreign_intensity, 2),
+        "trust_intensity": round(trust_intensity, 2),
+        "dealer_intensity": round(dealer_intensity, 2),
+        "total_inst_intensity": round(total_inst_intensity, 2),
+        "inst_strength_level": strength_level
     }
 
 
 # ======================
-# ATR / 主力資金
+# ATR / 主力資金 / 流動性
 # ======================
 def calc_atr(df, period=14):
     high = df["High"]
@@ -792,6 +856,56 @@ def calc_atr(df, period=14):
     ], axis=1).max(axis=1)
 
     return tr.rolling(period).mean()
+
+
+def calc_liquidity(df):
+    close = df["Close"]
+    volume = df["Volume"]
+
+    avg_volume_5 = safe_float(volume.rolling(5).mean().iloc[-1]) or 0
+    avg_volume_20 = safe_float(volume.rolling(20).mean().iloc[-1]) or 0
+    avg_amount_20 = safe_float((close * volume).rolling(20).mean().iloc[-1]) or 0
+
+    liquidity_score = 0
+    liquidity_warnings = []
+    liquidity_level = "普通"
+
+    if avg_volume_20 >= 500_000:
+        liquidity_score += 10
+
+    if avg_volume_20 >= 1_000_000:
+        liquidity_score += 10
+        liquidity_level = "佳"
+
+    if avg_volume_20 >= 3_000_000:
+        liquidity_score += 10
+        liquidity_level = "優"
+
+    if avg_amount_20 >= 50_000_000:
+        liquidity_score += 10
+
+    if avg_volume_20 < MIN_AVG_VOLUME_20:
+        liquidity_score -= 30
+        liquidity_level = "不足"
+        liquidity_warnings.append("20日均量低於500張")
+
+    if avg_amount_20 < MIN_AVG_AMOUNT_20:
+        liquidity_score -= 20
+        liquidity_level = "不足"
+        liquidity_warnings.append("20日均成交金額偏低")
+
+    is_liquid_enough = avg_volume_20 >= MIN_AVG_VOLUME_20 and avg_amount_20 >= MIN_AVG_AMOUNT_20
+
+    return {
+        "avg_volume_5": round(avg_volume_5, 0),
+        "avg_volume_20": round(avg_volume_20, 0),
+        "avg_amount_20": round(avg_amount_20, 0),
+        "avg_volume_20_lots": round(avg_volume_20 / 1000, 1),
+        "liquidity_score": liquidity_score,
+        "liquidity_level": liquidity_level,
+        "liquidity_warnings": liquidity_warnings,
+        "is_liquid_enough": is_liquid_enough
+    }
 
 
 def calc_main_force(df):
@@ -1298,14 +1412,19 @@ def analyze_stock(df):
         warnings.append("波動過大")
         score -= 15
 
+    liquidity = calc_liquidity(df)
     main_force = calc_main_force(df)
     egg = analyze_egg_position(price, safe_float(low_60), safe_float(high_60))
     candle = analyze_candle_pattern(df)
     breakout = analyze_breakout_pullback(df)
 
+    score += liquidity["liquidity_score"]
     score += egg["egg_score"]
     score += candle["candle_score"]
     score += breakout["breakout_score"]
+
+    if liquidity["liquidity_warnings"]:
+        warnings.extend(liquidity["liquidity_warnings"])
 
     stop_loss = None
     take_profit_1 = None
@@ -1353,6 +1472,7 @@ def analyze_stock(df):
         "latest_low": round(float(low.iloc[-1]), 2),
     }
 
+    result.update(liquidity)
     result.update(egg)
     result.update(candle)
     result.update(breakout)
@@ -1413,6 +1533,7 @@ def calc_sector_scores(items):
         avg_20d = sum(x["change_20d"] for x in arr) / len(arr)
         avg_main = sum(x["main_score"] for x in arr) / len(arr)
         avg_inst = sum(x["inst_score"] for x in arr) / len(arr)
+        avg_liquidity = sum(x.get("liquidity_score", 0) for x in arr) / len(arr)
         strong_count = len([x for x in arr if x["technical_score"] >= 60])
         strong_ratio = strong_count / len(arr)
 
@@ -1442,6 +1563,9 @@ def calc_sector_scores(items):
         if avg_inst >= 15:
             score += 10
 
+        if avg_liquidity >= 15:
+            score += 8
+
         sector_scores[sector] = {
             "sector": sector,
             "sector_score": score,
@@ -1449,6 +1573,7 @@ def calc_sector_scores(items):
             "sector_avg_20d": round(avg_20d, 2),
             "sector_avg_main": round(avg_main, 2),
             "sector_avg_inst": round(avg_inst, 2),
+            "sector_avg_liquidity": round(avg_liquidity, 2),
             "sector_strong_ratio": round(strong_ratio * 100, 1),
             "sector_stock_count": len(arr)
         }
@@ -1478,6 +1603,13 @@ def determine_buy_type_and_entry_status(item):
     main_signals = item.get("main_signals", [])
     breakout_state = item.get("breakout_state", "")
     score = item.get("score", 0)
+
+    if not item.get("is_liquid_enough", False):
+        return {
+            "buy_type": "流動性不足型",
+            "entry_status": "不列入",
+            "entry_reason": "20日均量或均成交金額不足，實戰滑價與流動性風險較高。"
+        }
 
     if "跌破月線" in warnings:
         return {
@@ -1677,7 +1809,13 @@ def calc_trade_plan(item):
     if item.get("main_score", 0) >= 50:
         entry_check_score += 10
 
-    if item.get("entry_status") in ["過熱不追", "跌破取消", "禁止新倉"]:
+    if item.get("inst_strength_level") in ["強", "極強"]:
+        entry_check_score += 10
+
+    if item.get("liquidity_level") in ["佳", "優"]:
+        entry_check_score += 8
+
+    if item.get("entry_status") in ["過熱不追", "跌破取消", "禁止新倉", "不列入"]:
         entry_check_score = max(entry_check_score - 40, 0)
 
     entry_triggered = (
@@ -1782,22 +1920,19 @@ def breakout_pullback_strategy_backtest(df):
         if not close_i:
             continue
 
-        # 第一階段：突破前高
         if close_i <= breakout_level * 1.003:
             continue
 
         pullback_confirm_idx = None
         pullback_low = None
 
-        # 第二階段：8日內回採前高附近且不破
         for j in range(i + 1, min(i + 9, len(df) - 10)):
             low_j = safe_float(df["Low"].iloc[j])
             close_j = safe_float(df["Close"].iloc[j])
             open_j = safe_float(df["Open"].iloc[j])
-            high_j = safe_float(df["High"].iloc[j])
             high_prev = safe_float(df["High"].iloc[j - 1])
 
-            if not all([low_j, close_j, open_j, high_j, high_prev]):
+            if not all([low_j, close_j, open_j, high_prev]):
                 continue
 
             if close_j < breakout_level * 0.995:
@@ -1935,29 +2070,32 @@ def classify_stock(item):
         "跌破月線" in warnings or
         "高量下跌警訊" in main_signals or
         item.get("breakout_state") == "假突破取消" or
-        item.get("entry_status") in ["跌破取消", "過熱不追"] or
+        item.get("entry_status") in ["跌破取消", "過熱不追", "不列入"] or
         item.get("egg_zone") == "蛋殼過熱區" or
-        item.get("candle_score", 0) <= -20
+        item.get("candle_score", 0) <= -20 or
+        not item.get("is_liquid_enough", False)
     )
 
     if is_invalid:
         return None
 
     if (
-        total_score >= 220 and
+        total_score >= 225 and
         main_score >= 60 and
-        inst_score >= 20 and
+        inst_score >= 25 and
         sector_score >= 20 and
         money_ratio >= 1.2 and
-        item.get("entry_check_score", 0) >= 60
+        item.get("entry_check_score", 0) >= 65 and
+        item.get("liquidity_level") in ["佳", "優"]
     ):
         return "S"
 
     if (
-        total_score >= 175 and
+        total_score >= 178 and
         main_score >= 35 and
         sector_score >= 10 and
-        money_ratio >= 1.1
+        money_ratio >= 1.1 and
+        item.get("liquidity_level") != "不足"
     ):
         return "A"
 
@@ -1972,7 +2110,7 @@ def build_elite_results(s_results, a_results, market_info):
 
     for item in s_results:
         copied = dict(item)
-        copied["elite_reason"] = "S級優先，已通過分數、資金、法人、族群、K棒、位階與風控篩選。"
+        copied["elite_reason"] = "S級優先，已通過分數、資金、法人、族群、K棒、位階、流動性與風控篩選。"
         pool.append(copied)
 
     if market_info.get("risk_switch") != "只允許S級":
@@ -2010,6 +2148,9 @@ def build_elite_results(s_results, a_results, market_info):
         if x.get("trust_days", 0) >= 3:
             bonus += 8
 
+        if x.get("inst_strength_level") in ["強", "極強"]:
+            bonus += 12
+
         if x.get("sector_rank", 999) <= 5:
             bonus += 10
 
@@ -2019,6 +2160,11 @@ def build_elite_results(s_results, a_results, market_info):
         if x.get("entry_triggered"):
             bonus += 15
 
+        if x.get("liquidity_level") == "優":
+            bonus += 10
+        elif x.get("liquidity_level") == "佳":
+            bonus += 5
+
         return x.get("score", 0) + bonus
 
     sorted_pool = sorted(pool, key=elite_score, reverse=True)
@@ -2027,7 +2173,7 @@ def build_elite_results(s_results, a_results, market_info):
     sector_count = {}
 
     for x in sorted_pool:
-        if x.get("entry_status") in ["過熱不追", "跌破取消", "禁止新倉"]:
+        if x.get("entry_status") in ["過熱不追", "跌破取消", "禁止新倉", "不列入"]:
             continue
 
         if "高量下跌警訊" in x.get("main_signals", []):
@@ -2036,10 +2182,12 @@ def build_elite_results(s_results, a_results, market_info):
         if x.get("candle_score", 0) <= -20:
             continue
 
+        if not x.get("is_liquid_enough", False):
+            continue
+
         sector = x.get("sector", "其他")
         current_sector_count = sector_count.get(sector, 0)
 
-        # 同族群集中風險限制：今日精選最多 3 檔，同族群最多 2 檔
         if current_sector_count >= 2:
             continue
 
@@ -2073,7 +2221,7 @@ def candidate_status_is_watchable(status):
 
 
 def candidate_status_is_invalid(status):
-    return status in ["跌破取消", "過熱不追", "禁止新倉"]
+    return status in ["跌破取消", "過熱不追", "禁止新倉", "不列入"]
 
 
 def update_candidate_pool(all_ranked_items):
@@ -2089,7 +2237,6 @@ def update_candidate_pool(all_ranked_items):
 
     current_map = {x["symbol"]: x for x in all_ranked_items}
 
-    # 先處理今日符合候選資格的股票
     for item in all_ranked_items:
         symbol = item["symbol"]
         status = item.get("entry_status", "-")
@@ -2131,6 +2278,10 @@ def update_candidate_pool(all_ranked_items):
             "egg_zone": item.get("egg_zone", "-"),
             "wave_stage": item.get("wave_stage", "-"),
             "candle_signal": item.get("candle_signal", "-"),
+            "inst_strength_level": item.get("inst_strength_level", "-"),
+            "total_inst_intensity": item.get("total_inst_intensity", 0),
+            "liquidity_level": item.get("liquidity_level", "-"),
+            "avg_volume_20_lots": item.get("avg_volume_20_lots", 0),
             "reason": item.get("entry_reason", "-"),
             "updated_at": now
         }
@@ -2143,7 +2294,6 @@ def update_candidate_pool(all_ranked_items):
             alert["alert_note"] = "候選股狀態已轉為可觀察進場，請人工確認量價與支撐後再決策。"
             entry_alerts.append(alert)
 
-    # 再處理舊候選失效
     for symbol, old in old_candidates.items():
         current_item = current_map.get(symbol)
 
@@ -2165,7 +2315,6 @@ def update_candidate_pool(all_ranked_items):
             invalid["updated_at"] = now
             invalid_alerts.append(invalid)
 
-    # 候選池排序
     sorted_candidates = dict(
         sorted(
             new_candidates.items(),
@@ -2198,7 +2347,7 @@ def update_candidate_pool(all_ranked_items):
 
 
 # ======================
-# 交易紀錄
+# 交易紀錄與策略統計
 # ======================
 def load_track():
     return read_json_file(TRACK_FILE, [])
@@ -2282,6 +2431,87 @@ def calc_trade_log_stats(logs):
     }
 
 
+def summarize_group(rows, key):
+    groups = {}
+
+    for r in rows:
+        group = r.get(key, "-")
+        groups.setdefault(group, []).append(r)
+
+    result = []
+
+    for group, arr in groups.items():
+        if not arr:
+            continue
+
+        returns = [x.get("pnl_pct", 0) for x in arr if x.get("pnl_pct") is not None]
+        if not returns:
+            continue
+
+        wins = [x for x in returns if x > 0]
+        losses = [x for x in returns if x <= 0]
+
+        avg_return = sum(returns) / len(returns)
+        winrate = len(wins) / len(returns) * 100
+        avg_win = sum(wins) / len(wins) if wins else 0
+        avg_loss = abs(sum(losses) / len(losses)) if losses else 0
+        expectancy = (winrate / 100 * avg_win) - ((100 - winrate) / 100 * avg_loss)
+
+        result.append({
+            "name": group,
+            "count": len(returns),
+            "winrate": round(winrate, 2),
+            "avg_return": round(avg_return, 2),
+            "expectancy": round(expectancy, 2)
+        })
+
+    result = sorted(result, key=lambda x: (x["expectancy"], x["avg_return"], x["winrate"]), reverse=True)
+    return result[:10]
+
+
+def calc_strategy_dashboard(logs):
+    closed = [x for x in logs if x.get("pnl_pct") is not None]
+
+    if not closed:
+        return {
+            "by_level": [],
+            "by_buy_type": [],
+            "by_sector": [],
+            "best_strategy_note": "尚無足夠交易紀錄，請先累積追蹤與結案資料。",
+            "worst_strategy_note": "-"
+        }
+
+    by_level = summarize_group(closed, "level")
+    by_buy_type = summarize_group(closed, "buy_type")
+    by_sector = summarize_group(closed, "sector")
+
+    best_group = None
+    worst_group = None
+
+    combined = by_buy_type + by_sector + by_level
+
+    if combined:
+        best_group = max(combined, key=lambda x: x.get("expectancy", -999))
+        worst_group = min(combined, key=lambda x: x.get("expectancy", 999))
+
+    best_note = "-"
+    worst_note = "-"
+
+    if best_group:
+        best_note = f"目前表現最佳：{best_group['name']}，期望值 {best_group['expectancy']}%，勝率 {best_group['winrate']}%。"
+
+    if worst_group:
+        worst_note = f"目前表現最弱：{worst_group['name']}，期望值 {worst_group['expectancy']}%，需降低權重或觀察。"
+
+    return {
+        "by_level": by_level,
+        "by_buy_type": by_buy_type,
+        "by_sector": by_sector,
+        "best_strategy_note": best_note,
+        "worst_strategy_note": worst_note
+    }
+
+
 # ======================
 # 掃描結果
 # ======================
@@ -2345,7 +2575,7 @@ def scan_market():
             if not result:
                 continue
 
-            inst = calc_institutional_score(symbol, inst_data)
+            inst = calc_institutional_score(symbol, inst_data, result.get("avg_volume_5", 0))
 
             item = {
                 "symbol": symbol,
@@ -2370,6 +2600,14 @@ def scan_market():
                 "trust_days": inst["trust_days"],
                 "dealer_days": inst["dealer_days"],
                 "total_net": inst["total_net"],
+                "foreign_net": inst["foreign_net"],
+                "trust_net": inst["trust_net"],
+                "dealer_net": inst["dealer_net"],
+                "foreign_intensity": inst["foreign_intensity"],
+                "trust_intensity": inst["trust_intensity"],
+                "dealer_intensity": inst["dealer_intensity"],
+                "total_inst_intensity": inst["total_inst_intensity"],
+                "inst_strength_level": inst["inst_strength_level"],
 
                 "change_5d": result["change_5d"],
                 "change_20d": result["change_20d"],
@@ -2423,6 +2661,15 @@ def scan_market():
                 "wave_score": result["wave_score"],
                 "wave_note": result["wave_note"],
 
+                "avg_volume_5": result["avg_volume_5"],
+                "avg_volume_20": result["avg_volume_20"],
+                "avg_amount_20": result["avg_amount_20"],
+                "avg_volume_20_lots": result["avg_volume_20_lots"],
+                "liquidity_score": result["liquidity_score"],
+                "liquidity_level": result["liquidity_level"],
+                "liquidity_warnings": result["liquidity_warnings"],
+                "is_liquid_enough": result["is_liquid_enough"],
+
                 "market_status": market_status,
                 "risk_mode": risk_mode
             }
@@ -2452,6 +2699,7 @@ def scan_market():
             "sector_avg_20d": 0,
             "sector_avg_main": 0,
             "sector_avg_inst": 0,
+            "sector_avg_liquidity": 0,
             "sector_strong_ratio": 0,
             "sector_stock_count": 0
         })
@@ -2461,6 +2709,7 @@ def scan_market():
         item["sector_avg_20d"] = sector_data["sector_avg_20d"]
         item["sector_avg_main"] = sector_data["sector_avg_main"]
         item["sector_avg_inst"] = sector_data["sector_avg_inst"]
+        item["sector_avg_liquidity"] = sector_data["sector_avg_liquidity"]
         item["sector_strong_ratio"] = sector_data["sector_strong_ratio"]
         item["sector_stock_count"] = sector_data["sector_stock_count"]
         item["sector_rank"] = sector_rank_map.get(item["sector"], 999)
@@ -2596,7 +2845,7 @@ def index():
             else:
                 dynamic_trailing_stop = t.get("dynamic_trailing_stop", t.get("trailing_stop", 0))
 
-            pnl = (curr - t["price"]) / t["price"] * 100
+            pnl = (curr - t["price"]) / t["price"] * 100 if t.get("price") else 0
 
             t["curr"] = round(curr, 2)
             t["pnl"] = round(pnl, 2)
@@ -2626,6 +2875,7 @@ def index():
 
     winrate, avg = calc_track_stats(tracks)
     trade_stats = calc_trade_log_stats(trade_logs)
+    strategy_dashboard = calc_strategy_dashboard(trade_logs)
 
     return render_template(
         "index.html",
@@ -2664,8 +2914,11 @@ def index():
         winrate=winrate,
         avg=avg,
         trade_stats=trade_stats,
+        strategy_dashboard=strategy_dashboard,
         account_size=ACCOUNT_SIZE,
         risk_per_trade=round(RISK_PER_TRADE * 100, 2),
+        min_avg_volume_lots=round(MIN_AVG_VOLUME_20 / 1000, 0),
+        min_avg_amount=MIN_AVG_AMOUNT_20,
         now=taiwan_now()
     )
 
@@ -2737,6 +2990,8 @@ def track(symbol, name, price, stop_loss, take1, take2):
             "wave_stage": source_item.get("wave_stage", "-"),
             "candle_signal": source_item.get("candle_signal", "-"),
             "breakout_state": source_item.get("breakout_state", "-"),
+            "inst_strength_level": source_item.get("inst_strength_level", "-"),
+            "liquidity_level": source_item.get("liquidity_level", "-"),
             "score": source_item.get("score", 0),
             "sector": source_item.get("sector", "-")
         })
@@ -2784,6 +3039,8 @@ def track_candidate(symbol):
             "wave_stage": item.get("wave_stage", "-"),
             "candle_signal": item.get("candle_signal", "-"),
             "breakout_state": item.get("breakout_state", "-"),
+            "inst_strength_level": item.get("inst_strength_level", "-"),
+            "liquidity_level": item.get("liquidity_level", "-"),
             "score": item.get("score", 0),
             "sector": item.get("sector", "-")
         })
@@ -2832,6 +3089,8 @@ def close_trade(symbol):
         "wave_stage": item.get("wave_stage", "-"),
         "candle_signal": item.get("candle_signal", "-"),
         "breakout_state": item.get("breakout_state", "-"),
+        "inst_strength_level": item.get("inst_strength_level", "-"),
+        "liquidity_level": item.get("liquidity_level", "-"),
         "highest_since_entry": item.get("highest_since_entry", "-"),
         "dynamic_trailing_stop": item.get("dynamic_trailing_stop", "-")
     })
