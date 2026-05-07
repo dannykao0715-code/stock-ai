@@ -20,7 +20,7 @@ body {
 }
 
 .container {
-    max-width: 1420px;
+    max-width: 1460px;
 }
 
 .card {
@@ -56,6 +56,16 @@ hr {
 
 .level-a {
     color: #38bdf8;
+    font-weight: 900;
+}
+
+.level-b {
+    color: #22c55e;
+    font-weight: 900;
+}
+
+.level-hot {
+    color: #fb7185;
     font-weight: 900;
 }
 
@@ -188,7 +198,6 @@ hr {
 
 .table td {
     color: #e5e7eb;
-    vertical-align: middle;
 }
 
 .top-card {
@@ -224,6 +233,14 @@ hr {
     border-color: #38bdf8;
 }
 
+.level-card-b {
+    border-color: #22c55e;
+}
+
+.level-card-hot {
+    border-color: #fb7185;
+}
+
 .metric-box {
     background: #0f172a;
     border: 1px solid #334155;
@@ -235,6 +252,14 @@ hr {
 .trade-box {
     background: #111827;
     border: 1px solid #38bdf8;
+    border-radius: 12px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.advanced-box {
+    background: #111827;
+    border: 1px solid #facc15;
     border-radius: 12px;
     padding: 10px;
     margin-bottom: 8px;
@@ -253,21 +278,6 @@ hr {
 .rank-number {
     color: #facc15;
     font-weight: 900;
-}
-
-.check-box {
-    background: #0f172a;
-    border: 1px solid #475569;
-    border-radius: 10px;
-    padding: 8px;
-}
-
-.holding-box {
-    background: #111827;
-    border: 1px solid #475569;
-    border-radius: 10px;
-    padding: 8px;
-    min-width: 260px;
 }
 </style>
 </head>
@@ -291,7 +301,7 @@ hr {
 </div>
 <div class="info-line">
     📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 
-    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}
+    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ B級：{{ b_count }} ｜ 過熱：{{ hot_count }}
 </div>
 
 <div class="my-3">
@@ -305,8 +315,7 @@ hr {
 </div>
 
 <div class="alert alert-warning">
-    {{ risk_note }}<br>
-    本版已加入：正常回檔、節奏是否還在、大盤/族群仍支撐、結構延續/失效，並整合到持有管理與出場建議。
+    {{ risk_note }}
 </div>
 
 <hr>
@@ -347,9 +356,7 @@ hr {
     本金設定：{{ account_size }} 元 ｜ 單筆風險：{{ risk_per_trade }}% ｜ 
     已結案交易：{{ trade_stats.trade_count }} 筆 ｜ 
     最佳買點類型：{{ trade_stats.best_buy_type }} ｜ 
-    最佳等級：{{ trade_stats.best_level }} ｜ 
-    平均持有天數：{{ trade_stats.avg_hold_days }} 天 ｜ 
-    平均進場檢查分：{{ trade_stats.best_check_score }}
+    最佳等級：{{ trade_stats.best_level }}
 </div>
 
 <hr>
@@ -395,7 +402,7 @@ hr {
 
 <hr>
 
-<h4 class="section-title">📉 追蹤清單｜持有管理</h4>
+<h4 class="section-title">📉 追蹤清單｜模擬交易</h4>
 
 {% if tracks %}
 <div class="table-responsive">
@@ -408,14 +415,12 @@ hr {
 <th>損益</th>
 <th>等級</th>
 <th>買點</th>
-<th>停損</th>
-<th>移動停利/停損</th>
+<th>進場點</th>
+<th>確認點</th>
+<th>初始停損</th>
+<th>移動停利</th>
 <th>訊號</th>
-<th>正常回檔</th>
-<th>節奏</th>
-<th>大盤/族群支撐</th>
-<th>結構</th>
-<th>持有建議</th>
+<th>日期</th>
 <th>操作</th>
 </tr>
 </thead>
@@ -423,11 +428,7 @@ hr {
 <tbody>
 {% for t in tracks %}
 <tr>
-<td>
-    {{ t.name }}<br>
-    <span class="small-text">{{ t.symbol }}</span><br>
-    <span class="small-text">族群：{{ t.sector }}｜目前排名：{{ t.current_sector_rank }}</span>
-</td>
+<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
 <td>{{ t.price }}</td>
 <td>{{ t.curr }}</td>
 
@@ -443,11 +444,13 @@ hr {
 
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
-<td class="bad">{{ t.stop_loss }}</td>
+<td>{{ t.entry_price }}</td>
+<td>{{ t.confirm_price }}</td>
+<td class="bad">{{ t.initial_stop }}</td>
 <td class="warning">{{ t.trailing_stop }}</td>
 
 <td>
-{% if t.signal == "停損" or t.signal == "風險警戒" or t.signal == "建議結案" or t.signal == "減碼防守" or t.signal == "風險升高" %}
+{% if t.signal == "停損" or t.signal == "風險警戒" %}
 <span class="bad">{{ t.signal }}</span>
 {% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" or t.signal == "移動停利" %}
 <span class="good">{{ t.signal }}</span>
@@ -456,34 +459,7 @@ hr {
 {% endif %}
 </td>
 
-<td>
-<div class="holding-box small-text">
-{{ t.pullback_status }}
-</div>
-</td>
-
-<td>
-<div class="holding-box small-text">
-{{ t.rhythm_status }}
-</div>
-</td>
-
-<td>
-<div class="holding-box small-text">
-{{ t.support_status }}
-</div>
-</td>
-
-<td>
-<div class="holding-box small-text">
-{{ t.structure_status }}
-</div>
-</td>
-
-<td>
-<span class="warning">{{ t.holding_advice }}</span><br>
-<span class="small-text">{{ t.holding_reason }}</span>
-</td>
+<td>{{ t.date }}</td>
 
 <td>
 <a href="/close-trade/{{ t.symbol }}" class="btn btn-success btn-sm mb-1">結案</a>
@@ -515,11 +491,10 @@ hr {
 <th>損益</th>
 <th>等級</th>
 <th>買點</th>
-<th>進場檢查分</th>
-<th>風報比</th>
-<th>族群</th>
-<th>出場建議</th>
-<th>持有天數</th>
+<th>位階</th>
+<th>波段</th>
+<th>K棒</th>
+<th>突破狀態</th>
 <th>進場日</th>
 <th>出場日</th>
 </tr>
@@ -541,11 +516,10 @@ hr {
 </td>
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
-<td>{{ t.entry_check_score }}</td>
-<td>{{ t.risk_reward_ratio }}</td>
-<td>{{ t.sector }}</td>
-<td>{{ t.exit_advice }}</td>
-<td>{{ t.hold_days }}</td>
+<td>{{ t.egg_zone }}</td>
+<td>{{ t.wave_stage }}</td>
+<td>{{ t.candle_signal }}</td>
+<td>{{ t.breakout_state }}</td>
 <td>{{ t.entry_date }}</td>
 <td>{{ t.exit_date }}</td>
 </tr>
@@ -562,7 +536,7 @@ hr {
 {% macro entry_badge(status) %}
     {% if status == "可觀察進場" %}
         <span class="badge badge-entry">{{ status }}</span>
-    {% elif status == "等拉回" or status == "等突破" %}
+    {% elif status == "等拉回" or status == "等突破" or status == "僅列觀察" or status == "等回採" or status == "等轉強K" %}
         <span class="badge badge-wait">{{ status }}</span>
     {% else %}
         <span class="badge badge-danger-status">{{ status }}</span>
@@ -579,7 +553,7 @@ hr {
     <div class="card {{ card_class }} p-3 h-100">
 
         {% if elite %}
-        <span class="badge badge-elite mb-2">核心精選</span>
+        <span class="badge badge-elite mb-2">今日精選</span>
         {% endif %}
 
         <h5>{{ r.name }}</h5>
@@ -601,18 +575,23 @@ hr {
         <div class="trade-box">
             <div>買點類型：<span class="warning">{{ r.buy_type }}</span></div>
             <div>進場狀態：{{ entry_badge(r.entry_status) }}</div>
-            <div>進場檢查分：<span class="warning">{{ r.entry_check_score }}</span></div>
-            <div>風報比：<span class="good">{{ r.risk_reward_ratio }}</span></div>
-            <div>上方空間：{{ r.upside_space_pct }}%</div>
-            <div>停損風險：{{ r.risk_pct }}%</div>
             <div class="small-text mt-2">{{ r.entry_reason }}</div>
         </div>
 
-        <div class="check-box mb-2">
-            <div class="small-text">進場檢查</div>
-            {% for c in r.entry_checks %}
-                <span class="badge badge-tech">{{ c }}</span>
-            {% endfor %}
+        <div class="advanced-box">
+            <div>雞蛋位階：<span class="warning">{{ r.egg_zone }}</span> ｜ 位階 {{ r.egg_position_pct }}%</div>
+            <div class="small-text">{{ r.egg_note }}</div>
+            <hr>
+            <div>波段位置：<span class="blue">{{ r.wave_stage }}</span></div>
+            <div class="small-text">{{ r.wave_note }}</div>
+            <hr>
+            <div>K棒型態：<span class="purple">{{ r.candle_signal }}</span></div>
+            <div class="small-text">{{ r.candle_note }}</div>
+            <hr>
+            <div>突破狀態：<span class="good">{{ r.breakout_state }}</span></div>
+            <div>前高壓力：{{ r.breakout_level }}</div>
+            <div>回採低點：{{ r.pullback_low }}</div>
+            <div class="small-text">{{ r.breakout_note }}</div>
         </div>
 
         {% if elite and r.elite_reason %}
@@ -626,7 +605,27 @@ hr {
             <div>主力資金分：<span class="purple">{{ r.main_score }}</span></div>
             <div>法人籌碼分：<span class="good">{{ r.inst_score }}</span></div>
             <div>族群強度分：<span class="warning">{{ r.sector_score }}</span></div>
+            <div>進場檢查分：<span class="warning">{{ r.entry_check_score }}</span></div>
+            <div>風報比：<span class="good">{{ r.risk_reward }}</span></div>
         </div>
+
+        <hr>
+
+        <div class="small-text">明確交易計畫</div>
+        <div>明確進場點：<span class="warning">{{ r.entry_price }}</span></div>
+        <div>確認進場點：<span class="blue">{{ r.confirm_price }}</span></div>
+        <div>初始停損點：<span class="bad">{{ r.initial_stop }}</span></div>
+        <div>移動停利點：<span class="good">{{ r.trailing_stop }}</span></div>
+        <div>目標價：<span class="good">{{ r.target_price }}</span></div>
+        <div>
+            進場是否觸發：
+            {% if r.entry_triggered %}
+            <span class="good">已觸發</span>
+            {% else %}
+            <span class="warning">尚未觸發</span>
+            {% endif %}
+        </div>
+        <div class="small-text">{{ r.trade_plan_note }}</div>
 
         <hr>
 
@@ -662,7 +661,6 @@ hr {
         <div>族群5日均漲幅：{{ r.sector_avg_5d }}%</div>
         <div>族群20日均漲幅：{{ r.sector_avg_20d }}%</div>
         <div>族群強勢比例：{{ r.sector_strong_ratio }}%</div>
-
         <span class="badge badge-sector">族群強度 {{ r.sector_score }}</span>
 
         <hr>
@@ -697,9 +695,6 @@ hr {
         <hr>
 
         <div class="small-text">建議風控與部位</div>
-        <div>停損：<span class="bad">{{ r.stop_loss }}</span></div>
-        <div>第一停利：<span class="good">{{ r.take_profit_1 }}</span></div>
-        <div>第二停利：<span class="good">{{ r.take_profit_2 }}</span></div>
         <div>單筆可承受風險：{{ r.risk_amount }} 元</div>
         <div>每股風險：{{ r.risk_per_share }} 元</div>
         <div>建議股數：{{ r.suggest_shares }} 股</div>
@@ -707,7 +702,7 @@ hr {
         <div>約當部位：{{ r.position_value }} 元</div>
         <div class="small-text">{{ r.position_note }}</div>
 
-        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}/{{ r.stop_loss }}/{{ r.take_profit_1 }}/{{ r.take_profit_2 }}"
+        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}/{{ r.initial_stop }}/{{ r.take_profit_1 }}/{{ r.take_profit_2 }}"
            class="btn btn-warning mt-3">
             加入追蹤
         </a>
@@ -723,20 +718,28 @@ hr {
 {% endif %}
 {% endmacro %}
 
-{{ stock_cards(elite_results, "🎯 今日核心精選｜最多 3 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
+{{ stock_cards(elite_results, "🎯 今日精選｜最多 5 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
 
 <hr>
 
-{{ stock_cards(s_results, "🏆 S級｜最高品質觀察", "level-s", "level-card-s", "目前沒有 S 級股票。") }}
+{{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票。") }}
 
 <hr>
 
-{{ stock_cards(a_results, "🔷 A級｜次高品質觀察", "level-a", "level-card-a", "目前沒有 A 級股票。") }}
+{{ stock_cards(a_results, "🔷 A級｜等待突破或拉回", "level-a", "level-card-a", "目前沒有 A 級股票。") }}
+
+<hr>
+
+{{ stock_cards(b_results, "🟢 B級｜觀察名單", "level-b", "level-card-b", "目前沒有 B 級股票。") }}
+
+<hr>
+
+{{ stock_cards(hot_results, "🔥 過熱區｜分數高但不建議追高", "level-hot", "level-card-hot", "目前沒有過熱警示股票。") }}
 
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。本版已加入正常回檔、節奏判斷、大盤/族群支撐、結構延續與結構失效判斷，並整合到持有管理、移動停利、停損與結案統計。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本已整合突破回採、雞蛋理論位階、波段位置、K棒型態、明確進場點、確認點、停損點與移動停利點。
 </div>
 
 </div>
