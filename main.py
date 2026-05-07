@@ -37,7 +37,6 @@ def require_auth():
 @app.before_request
 def protect_site():
     auth = request.authorization
-
     if not auth or not check_auth(auth.username, auth.password):
         return require_auth()
 
@@ -53,6 +52,7 @@ TRADE_LOG_FILE = "trade_log.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 INST_FILE = "institutional_cache.json"
+CANDIDATE_FILE = "candidate_pool.json"
 
 FULL_MARKET_MIN_COUNT = 1700
 PARTIAL_MARKET_MIN_COUNT = 1000
@@ -61,6 +61,9 @@ MAX_ELITE_RESULTS = 3
 MAX_S_RESULTS = 10
 MAX_A_RESULTS = 10
 MAX_SECTOR_RANK = 10
+MAX_CANDIDATE_DISPLAY = 20
+MAX_ALERT_DISPLAY = 10
+MAX_INVALID_DISPLAY = 10
 
 ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "1000000"))
 RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", "0.01"))
@@ -556,6 +559,7 @@ def get_market_status():
             "risk_mode": "防守",
             "risk_switch": "保守觀察",
             "allow_new_positions": False,
+            "risk_multiplier": 0,
             "risk_note": "大盤資料不足，暫不建議積極建立新倉。"
         }
 
@@ -566,7 +570,8 @@ def get_market_status():
             "risk_mode": "積極",
             "risk_switch": "允許新倉",
             "allow_new_positions": True,
-            "risk_note": "加權與櫃買結構偏多，可允許 S/A 級進入今日精選。"
+            "risk_multiplier": 1.0,
+            "risk_note": "加權與櫃買結構偏多，可允許 S/A 級進入今日精選，部位維持正常。"
         }
 
     if twii["above_ma60"] and twii["ma20_gt_ma60"]:
@@ -576,7 +581,8 @@ def get_market_status():
             "risk_mode": "正常",
             "risk_switch": "允許新倉",
             "allow_new_positions": True,
-            "risk_note": "大盤中期偏多，但仍需避開過熱與高量轉弱標的。"
+            "risk_multiplier": 0.8,
+            "risk_note": "大盤中期偏多，但仍需避開過熱與高量轉弱標的，部位略降。"
         }
 
     if not twii["above_ma20"] and not otc.get("above_ma20", False):
@@ -586,6 +592,7 @@ def get_market_status():
             "risk_mode": "防守",
             "risk_switch": "禁止新倉",
             "allow_new_positions": False,
+            "risk_multiplier": 0,
             "risk_note": "加權與櫃買皆弱於月線，系統禁止新倉，只保留追蹤與觀察。"
         }
 
@@ -596,7 +603,8 @@ def get_market_status():
             "risk_mode": "保守",
             "risk_switch": "只允許S級",
             "allow_new_positions": True,
-            "risk_note": "大盤低於月線，僅允許最強 S 級，並降低部位。"
+            "risk_multiplier": 0.3,
+            "risk_note": "大盤低於月線，僅允許最強 S 級，並大幅降低部位。"
         }
 
     return {
@@ -605,7 +613,8 @@ def get_market_status():
         "risk_mode": "保守",
         "risk_switch": "減碼觀察",
         "allow_new_positions": True,
-        "risk_note": "大盤盤整，今日精選會更偏向低風險、不追高、等待回採確認的標的。"
+        "risk_multiplier": 0.5,
+        "risk_note": "大盤盤整，今日精選偏向低風險、不追高、等待回採確認的標的，部位減半。"
     }
 
 
@@ -1691,35 +1700,44 @@ def calc_trade_plan(item):
     }
 
 
-def calc_position_sizing(item):
+def calc_position_sizing(item, market_info):
     price = item.get("entry_price") or item.get("price")
     stop_loss = item.get("initial_stop") or item.get("stop_loss")
 
-    if not price or not stop_loss or price <= stop_loss:
+    risk_multiplier = market_info.get("risk_multiplier", 0)
+    adjusted_risk_pct = RISK_PER_TRADE * risk_multiplier
+    adjusted_risk_amount = ACCOUNT_SIZE * adjusted_risk_pct
+
+    if not price or not stop_loss or price <= stop_loss or adjusted_risk_amount <= 0:
         return {
             "risk_amount": round(ACCOUNT_SIZE * RISK_PER_TRADE, 0),
+            "adjusted_risk_amount": round(adjusted_risk_amount, 0),
+            "risk_multiplier": risk_multiplier,
+            "adjusted_risk_pct": round(adjusted_risk_pct * 100, 2),
             "risk_per_share": 0,
             "suggest_shares": 0,
             "suggest_lots": 0,
             "position_value": 0,
-            "position_note": "停損價資料不足，無法估算部位。"
+            "position_note": "市場風險偏高或停損價資料不足，暫不建議建立部位。"
         }
 
-    risk_amount = ACCOUNT_SIZE * RISK_PER_TRADE
     risk_per_share = price - stop_loss
-    suggest_shares = math.floor(risk_amount / risk_per_share)
+    suggest_shares = math.floor(adjusted_risk_amount / risk_per_share)
     suggest_lots = math.floor(suggest_shares / 1000)
     position_value = suggest_shares * price
 
     if suggest_lots <= 0:
-        note = "停損距離較大或股價較高，依單筆風險限制不足一張。"
+        note = "停損距離較大或股價較高，依市場調整後風險限制不足一張。"
     elif suggest_lots >= 5:
         note = "建議部位偏大，仍應分批建立，不宜一次滿倉。"
     else:
-        note = "依帳戶風險與停損距離估算的建議部位。"
+        note = "已依大盤狀態調整單筆風險後估算部位。"
 
     return {
-        "risk_amount": round(risk_amount, 0),
+        "risk_amount": round(ACCOUNT_SIZE * RISK_PER_TRADE, 0),
+        "adjusted_risk_amount": round(adjusted_risk_amount, 0),
+        "risk_multiplier": risk_multiplier,
+        "adjusted_risk_pct": round(adjusted_risk_pct * 100, 2),
         "risk_per_share": round(risk_per_share, 2),
         "suggest_shares": suggest_shares,
         "suggest_lots": suggest_lots,
@@ -1729,10 +1747,10 @@ def calc_position_sizing(item):
 
 
 # ======================
-# 真實交易回測
+# 突破回採策略本體回測
 # ======================
-def realistic_backtest(df):
-    if df is None or len(df) < 220:
+def breakout_pullback_strategy_backtest(df):
+    if df is None or len(df) < 160:
         return {
             "bt_count": 0,
             "bt_winrate": 0,
@@ -1741,62 +1759,102 @@ def realistic_backtest(df):
             "bt_avg_win": 0,
             "bt_avg_loss": 0,
             "bt_max_drawdown": 0,
-            "bt_profit_factor": 0
+            "bt_profit_factor": 0,
+            "bt_note": "資料不足。"
         }
 
     trades = []
     equity = 100.0
     equity_curve = [equity]
 
-    for i in range(140, len(df) - 25, 5):
-        sample = df.iloc[:i].copy()
-        r = analyze_stock(sample)
+    for i in range(80, len(df) - 25):
+        past = df.iloc[:i].copy()
 
-        if not r:
+        high_20 = safe_float(past["High"].rolling(20).max().iloc[-1])
+        high_60 = safe_float(past["High"].rolling(60).max().iloc[-1])
+
+        if not high_20 or not high_60:
             continue
 
-        simple_score = r["technical_score"] + r["main_score"] + r.get("breakout_score", 0)
+        breakout_level = max(high_20, high_60)
 
-        if simple_score < 120:
+        close_i = safe_float(df["Close"].iloc[i])
+        if not close_i:
             continue
 
-        entry_idx = i + 1
+        # 第一階段：突破前高
+        if close_i <= breakout_level * 1.003:
+            continue
 
+        pullback_confirm_idx = None
+        pullback_low = None
+
+        # 第二階段：8日內回採前高附近且不破
+        for j in range(i + 1, min(i + 9, len(df) - 10)):
+            low_j = safe_float(df["Low"].iloc[j])
+            close_j = safe_float(df["Close"].iloc[j])
+            open_j = safe_float(df["Open"].iloc[j])
+            high_j = safe_float(df["High"].iloc[j])
+            high_prev = safe_float(df["High"].iloc[j - 1])
+
+            if not all([low_j, close_j, open_j, high_j, high_prev]):
+                continue
+
+            if close_j < breakout_level * 0.995:
+                pullback_confirm_idx = None
+                break
+
+            touched_support = low_j <= breakout_level * 1.015
+            turn_strong = close_j > open_j or close_j > high_prev
+
+            if touched_support and close_j >= breakout_level * 0.995 and turn_strong:
+                pullback_confirm_idx = j
+                pullback_low = low_j
+                break
+
+        if pullback_confirm_idx is None:
+            continue
+
+        entry_idx = pullback_confirm_idx + 1
         if entry_idx >= len(df):
             continue
 
         entry_open = safe_float(df["Open"].iloc[entry_idx])
-
         if not entry_open:
             continue
 
-        atr = calc_atr(df.iloc[:i])
-        atr_now = safe_float(atr.iloc[-1])
+        atr_series = calc_atr(df.iloc[:entry_idx])
+        atr_now = safe_float(atr_series.iloc[-1])
 
         if not atr_now:
             continue
 
         entry_price = entry_open * (1 + SLIPPAGE_RATE)
-        stop_price = entry_price - atr_now * 2
-        take_price = entry_price + atr_now * 3
-
+        initial_stop = min(breakout_level * 0.99, pullback_low * 0.99)
+        highest_after_entry = entry_price
         exit_price = safe_float(df["Close"].iloc[min(entry_idx + 20, len(df) - 1)])
 
-        for j in range(entry_idx, min(entry_idx + 20, len(df))):
-            day_low = safe_float(df["Low"].iloc[j])
-            day_high = safe_float(df["High"].iloc[j])
-            day_close = safe_float(df["Close"].iloc[j])
-            ma5 = df["Close"].iloc[:j + 1].rolling(5).mean().iloc[-1]
+        for k in range(entry_idx, min(entry_idx + 25, len(df))):
+            day_high = safe_float(df["High"].iloc[k])
+            day_low = safe_float(df["Low"].iloc[k])
+            day_close = safe_float(df["Close"].iloc[k])
 
-            if day_low is not None and day_low <= stop_price:
-                exit_price = stop_price * (1 - SLIPPAGE_RATE)
+            if not all([day_high, day_low, day_close]):
+                continue
+
+            highest_after_entry = max(highest_after_entry, day_high)
+            dynamic_trailing_stop = highest_after_entry - atr_now * 2.5
+
+            if day_low <= initial_stop:
+                exit_price = initial_stop * (1 - SLIPPAGE_RATE)
                 break
 
-            if day_high is not None and day_high >= take_price:
-                exit_price = take_price * (1 - SLIPPAGE_RATE)
+            if day_low <= dynamic_trailing_stop and day_close > entry_price:
+                exit_price = dynamic_trailing_stop * (1 - SLIPPAGE_RATE)
                 break
 
-            if j > entry_idx + 5 and day_close is not None and day_close < ma5:
+            ma5 = safe_float(df["Close"].iloc[:k + 1].rolling(5).mean().iloc[-1])
+            if k > entry_idx + 5 and ma5 and day_close < ma5:
                 exit_price = day_close * (1 - SLIPPAGE_RATE)
                 break
 
@@ -1805,7 +1863,6 @@ def realistic_backtest(df):
         net_return = gross_return - cost
 
         trades.append(net_return)
-
         equity *= (1 + net_return / 100)
         equity_curve.append(equity)
 
@@ -1818,7 +1875,8 @@ def realistic_backtest(df):
             "bt_avg_win": 0,
             "bt_avg_loss": 0,
             "bt_max_drawdown": 0,
-            "bt_profit_factor": 0
+            "bt_profit_factor": 0,
+            "bt_note": "近一年未出現足夠的突破回採交易樣本。"
         }
 
     wins = [x for x in trades if x > 0]
@@ -1855,7 +1913,8 @@ def realistic_backtest(df):
         "bt_avg_win": round(avg_win, 2),
         "bt_avg_loss": round(avg_loss, 2),
         "bt_max_drawdown": round(max_dd, 2),
-        "bt_profit_factor": round(profit_factor, 2)
+        "bt_profit_factor": round(profit_factor, 2),
+        "bt_note": "此回測使用突破前高、回採不破、轉強後隔日進場的策略本體。"
     }
 
 
@@ -1962,9 +2021,12 @@ def build_elite_results(s_results, a_results, market_info):
 
         return x.get("score", 0) + bonus
 
-    filtered = []
+    sorted_pool = sorted(pool, key=elite_score, reverse=True)
 
-    for x in pool:
+    filtered = []
+    sector_count = {}
+
+    for x in sorted_pool:
         if x.get("entry_status") in ["過熱不追", "跌破取消", "禁止新倉"]:
             continue
 
@@ -1974,11 +2036,165 @@ def build_elite_results(s_results, a_results, market_info):
         if x.get("candle_score", 0) <= -20:
             continue
 
+        sector = x.get("sector", "其他")
+        current_sector_count = sector_count.get(sector, 0)
+
+        # 同族群集中風險限制：今日精選最多 3 檔，同族群最多 2 檔
+        if current_sector_count >= 2:
+            continue
+
         filtered.append(x)
+        sector_count[sector] = current_sector_count + 1
 
-    filtered = sorted(filtered, key=elite_score, reverse=True)
+        if len(filtered) >= MAX_ELITE_RESULTS:
+            break
 
-    return filtered[:MAX_ELITE_RESULTS]
+    return filtered
+
+
+# ======================
+# 候選追蹤池
+# ======================
+def load_candidate_pool():
+    return read_json_file(CANDIDATE_FILE, {
+        "updated_at": "-",
+        "candidates": {},
+        "entry_alerts": [],
+        "invalid_alerts": []
+    })
+
+
+def save_candidate_pool(data):
+    write_json_file(CANDIDATE_FILE, data)
+
+
+def candidate_status_is_watchable(status):
+    return status in ["等突破", "等回採", "等轉強K", "可觀察進場", "等拉回"]
+
+
+def candidate_status_is_invalid(status):
+    return status in ["跌破取消", "過熱不追", "禁止新倉"]
+
+
+def update_candidate_pool(all_ranked_items):
+    old_data = load_candidate_pool()
+    old_candidates = old_data.get("candidates", {})
+
+    now = taiwan_now()
+    today = today_str()
+
+    new_candidates = {}
+    entry_alerts = []
+    invalid_alerts = []
+
+    current_map = {x["symbol"]: x for x in all_ranked_items}
+
+    # 先處理今日符合候選資格的股票
+    for item in all_ranked_items:
+        symbol = item["symbol"]
+        status = item.get("entry_status", "-")
+
+        if not candidate_status_is_watchable(status):
+            continue
+
+        old = old_candidates.get(symbol, {})
+        previous_status = old.get("current_status", "-")
+
+        first_seen = old.get("first_seen", today)
+        highest_score = max(old.get("highest_score", 0), item.get("score", 0))
+
+        is_entry_alert = (
+            previous_status in ["等突破", "等回採", "等轉強K", "等拉回", "僅列觀察"]
+            and status == "可觀察進場"
+        ) or item.get("entry_triggered", False)
+
+        candidate = {
+            "symbol": symbol,
+            "name": item.get("name", ""),
+            "sector": item.get("sector", "-"),
+            "level": item.get("level", "-"),
+            "first_seen": first_seen,
+            "last_seen": today,
+            "previous_status": previous_status,
+            "current_status": status,
+            "buy_type": item.get("buy_type", "-"),
+            "score": item.get("score", 0),
+            "highest_score": highest_score,
+            "entry_price": item.get("entry_price", 0),
+            "confirm_price": item.get("confirm_price", 0),
+            "initial_stop": item.get("initial_stop", 0),
+            "trailing_stop": item.get("trailing_stop", 0),
+            "risk_reward": item.get("risk_reward", 0),
+            "entry_check_score": item.get("entry_check_score", 0),
+            "entry_triggered": item.get("entry_triggered", False),
+            "breakout_state": item.get("breakout_state", "-"),
+            "egg_zone": item.get("egg_zone", "-"),
+            "wave_stage": item.get("wave_stage", "-"),
+            "candle_signal": item.get("candle_signal", "-"),
+            "reason": item.get("entry_reason", "-"),
+            "updated_at": now
+        }
+
+        new_candidates[symbol] = candidate
+
+        if is_entry_alert:
+            alert = dict(candidate)
+            alert["alert_type"] = "今日進場提醒"
+            alert["alert_note"] = "候選股狀態已轉為可觀察進場，請人工確認量價與支撐後再決策。"
+            entry_alerts.append(alert)
+
+    # 再處理舊候選失效
+    for symbol, old in old_candidates.items():
+        current_item = current_map.get(symbol)
+
+        if not current_item:
+            invalid = dict(old)
+            invalid["current_status"] = "候選失效"
+            invalid["alert_type"] = "候選失效"
+            invalid["alert_note"] = "今日未再符合 S/A 或候選條件，暫停觀察。"
+            invalid["updated_at"] = now
+            invalid_alerts.append(invalid)
+            continue
+
+        status = current_item.get("entry_status", "-")
+        if candidate_status_is_invalid(status):
+            invalid = dict(old)
+            invalid["current_status"] = status
+            invalid["alert_type"] = "候選失效"
+            invalid["alert_note"] = current_item.get("entry_reason", "條件轉弱，候選失效。")
+            invalid["updated_at"] = now
+            invalid_alerts.append(invalid)
+
+    # 候選池排序
+    sorted_candidates = dict(
+        sorted(
+            new_candidates.items(),
+            key=lambda kv: (
+                1 if kv[1].get("current_status") == "可觀察進場" else 0,
+                kv[1].get("score", 0),
+                kv[1].get("entry_check_score", 0)
+            ),
+            reverse=True
+        )
+    )
+
+    entry_alerts = sorted(
+        entry_alerts,
+        key=lambda x: (x.get("score", 0), x.get("entry_check_score", 0)),
+        reverse=True
+    )[:MAX_ALERT_DISPLAY]
+
+    invalid_alerts = invalid_alerts[:MAX_INVALID_DISPLAY]
+
+    data = {
+        "updated_at": now,
+        "candidates": sorted_candidates,
+        "entry_alerts": entry_alerts,
+        "invalid_alerts": invalid_alerts
+    }
+
+    save_candidate_pool(data)
+    return data
 
 
 # ======================
@@ -2089,7 +2305,11 @@ def load_scan_results():
         "elite_results": [],
         "s_results": [],
         "a_results": [],
-        "sector_rankings": []
+        "sector_rankings": [],
+        "candidate_count": 0,
+        "entry_alerts": [],
+        "invalid_alerts": [],
+        "candidate_pool": []
     })
 
 
@@ -2256,8 +2476,8 @@ def scan_market():
 
         item.update(determine_buy_type_and_entry_status(item))
         item.update(calc_trade_plan(item))
-        item.update(calc_position_sizing(item))
-        item.update(realistic_backtest(item["df"]))
+        item.update(calc_position_sizing(item, market_info))
+        item.update(breakout_pullback_strategy_backtest(item["df"]))
 
         level = classify_stock(item)
 
@@ -2282,6 +2502,13 @@ def scan_market():
 
     elite_results = build_elite_results(s_results, a_results, market_info)
 
+    all_ranked_items = s_results + a_results
+    candidate_data = update_candidate_pool(all_ranked_items)
+
+    candidate_pool_list = list(candidate_data.get("candidates", {}).values())[:MAX_CANDIDATE_DISPLAY]
+    entry_alerts = candidate_data.get("entry_alerts", [])
+    invalid_alerts = candidate_data.get("invalid_alerts", [])
+
     data = {
         "updated_at": taiwan_now(),
         "market_status": market_status,
@@ -2290,6 +2517,7 @@ def scan_market():
         "risk_switch": market_info["risk_switch"],
         "allow_new_positions": market_info["allow_new_positions"],
         "risk_note": market_info["risk_note"],
+        "risk_multiplier": market_info.get("risk_multiplier", 0),
         "stock_pool_count": total,
 
         "elite_count": len(elite_results),
@@ -2299,14 +2527,19 @@ def scan_market():
         "elite_results": elite_results,
         "s_results": s_results[:MAX_S_RESULTS],
         "a_results": a_results[:MAX_A_RESULTS],
-        "sector_rankings": sector_rankings
+        "sector_rankings": sector_rankings,
+
+        "candidate_count": len(candidate_pool_list),
+        "candidate_pool": candidate_pool_list,
+        "entry_alerts": entry_alerts,
+        "invalid_alerts": invalid_alerts
     }
 
     save_scan_results(data)
 
     save_scan_status(
         "done",
-        f"掃描完成：股票池 {total} 檔，今日精選 {len(elite_results)} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔。"
+        f"掃描完成：股票池 {total} 檔，今日精選 {len(elite_results)} 檔，S級 {len(s_results)} 檔，A級 {len(a_results)} 檔，候選 {len(candidate_pool_list)} 檔，進場提醒 {len(entry_alerts)} 檔。"
     )
 
 
@@ -2322,11 +2555,47 @@ def index():
     tracks = load_track()
     trade_logs = load_trade_log()
 
+    tracks_changed = False
+
     for t in tracks:
-        df = download_stock(t["symbol"], "5d")
+        df = download_stock(t["symbol"], "1y")
 
         try:
+            if df is None or df.empty:
+                raise ValueError("no price data")
+
             curr = safe_float(df["Close"].iloc[-1])
+            atr_series = calc_atr(df)
+            atr_now = safe_float(atr_series.iloc[-1])
+
+            entry_date = t.get("date", today_str())
+            entry_dt = pd.to_datetime(entry_date, errors="coerce")
+
+            if pd.notna(entry_dt):
+                after_entry = df[df.index >= entry_dt]
+            else:
+                after_entry = df.tail(30)
+
+            if after_entry.empty:
+                after_entry = df.tail(30)
+
+            highest_since_entry = safe_float(after_entry["High"].max()) or curr
+            old_highest = t.get("highest_since_entry", 0)
+
+            if highest_since_entry and highest_since_entry > old_highest:
+                t["highest_since_entry"] = round(highest_since_entry, 2)
+                tracks_changed = True
+
+            if atr_now and t.get("highest_since_entry"):
+                dynamic_trailing_stop = round(t["highest_since_entry"] - atr_now * 2.5, 2)
+                old_dynamic_stop = t.get("dynamic_trailing_stop", 0)
+
+                if dynamic_trailing_stop > old_dynamic_stop:
+                    t["dynamic_trailing_stop"] = dynamic_trailing_stop
+                    tracks_changed = True
+            else:
+                dynamic_trailing_stop = t.get("dynamic_trailing_stop", t.get("trailing_stop", 0))
+
             pnl = (curr - t["price"]) / t["price"] * 100
 
             t["curr"] = round(curr, 2)
@@ -2334,7 +2603,7 @@ def index():
 
             if t.get("initial_stop") and curr <= t["initial_stop"]:
                 t["signal"] = "停損"
-            elif t.get("trailing_stop") and curr <= t["trailing_stop"] and pnl > 0:
+            elif dynamic_trailing_stop and curr <= dynamic_trailing_stop and pnl > 0:
                 t["signal"] = "移動停利"
             elif t.get("take_profit_2") and curr >= t["take_profit_2"]:
                 t["signal"] = "第二階段停利"
@@ -2352,6 +2621,9 @@ def index():
             t["pnl"] = "-"
             t["signal"] = "-"
 
+    if tracks_changed:
+        save_track(tracks)
+
     winrate, avg = calc_track_stats(tracks)
     trade_stats = calc_trade_log_stats(trade_logs)
 
@@ -2365,6 +2637,7 @@ def index():
         risk_switch=scan_data.get("risk_switch", "-"),
         allow_new_positions=scan_data.get("allow_new_positions", False),
         risk_note=scan_data.get("risk_note", "-"),
+        risk_multiplier=scan_data.get("risk_multiplier", 0),
         scan_updated_at=scan_data.get("updated_at", "尚未掃描"),
         stock_pool_count=scan_data.get("stock_pool_count", 0),
 
@@ -2376,6 +2649,11 @@ def index():
         s_results=scan_data.get("s_results", []),
         a_results=scan_data.get("a_results", []),
         sector_rankings=scan_data.get("sector_rankings", []),
+
+        candidate_count=scan_data.get("candidate_count", 0),
+        candidate_pool=scan_data.get("candidate_pool", []),
+        entry_alerts=scan_data.get("entry_alerts", []),
+        invalid_alerts=scan_data.get("invalid_alerts", []),
 
         scan_status=scan_status_data.get("status", "idle"),
         scan_message=scan_status_data.get("message", "尚未掃描"),
@@ -2434,10 +2712,12 @@ def track(symbol, name, price, stop_loss, take1, take2):
     source_item = next((x for x in all_items if x["symbol"] == symbol), {})
 
     if not exists:
+        entry_price = float(price)
+
         data.append({
             "symbol": symbol,
             "name": name,
-            "price": float(price),
+            "price": entry_price,
             "stop_loss": float(stop_loss),
             "take_profit_1": float(take1),
             "take_profit_2": float(take2),
@@ -2449,6 +2729,8 @@ def track(symbol, name, price, stop_loss, take1, take2):
             "confirm_price": source_item.get("confirm_price", 0),
             "initial_stop": source_item.get("initial_stop", float(stop_loss)),
             "trailing_stop": source_item.get("trailing_stop", 0),
+            "dynamic_trailing_stop": source_item.get("trailing_stop", 0),
+            "highest_since_entry": entry_price,
             "risk_reward": source_item.get("risk_reward", 0),
             "entry_check_score": source_item.get("entry_check_score", 0),
             "egg_zone": source_item.get("egg_zone", "-"),
@@ -2461,6 +2743,52 @@ def track(symbol, name, price, stop_loss, take1, take2):
 
     save_track(data)
 
+    return redirect(url_for("index"))
+
+
+@app.route("/track-candidate/<symbol>")
+def track_candidate(symbol):
+    candidate_data = load_candidate_pool()
+    candidates = candidate_data.get("candidates", {})
+    item = candidates.get(symbol)
+
+    if not item:
+        return redirect(url_for("index"))
+
+    data = load_track()
+    exists = any(x["symbol"] == symbol for x in data)
+
+    if not exists:
+        entry_price = item.get("entry_price") or 0
+
+        data.append({
+            "symbol": symbol,
+            "name": item.get("name", symbol),
+            "price": float(entry_price) if entry_price else 0,
+            "stop_loss": float(item.get("initial_stop", 0)),
+            "take_profit_1": 0,
+            "take_profit_2": 0,
+            "date": today_str(),
+            "level": item.get("level", "-"),
+            "buy_type": item.get("buy_type", "-"),
+            "entry_status": item.get("current_status", "-"),
+            "entry_price": item.get("entry_price", 0),
+            "confirm_price": item.get("confirm_price", 0),
+            "initial_stop": item.get("initial_stop", 0),
+            "trailing_stop": item.get("trailing_stop", 0),
+            "dynamic_trailing_stop": item.get("trailing_stop", 0),
+            "highest_since_entry": float(entry_price) if entry_price else 0,
+            "risk_reward": item.get("risk_reward", 0),
+            "entry_check_score": item.get("entry_check_score", 0),
+            "egg_zone": item.get("egg_zone", "-"),
+            "wave_stage": item.get("wave_stage", "-"),
+            "candle_signal": item.get("candle_signal", "-"),
+            "breakout_state": item.get("breakout_state", "-"),
+            "score": item.get("score", 0),
+            "sector": item.get("sector", "-")
+        })
+
+    save_track(data)
     return redirect(url_for("index"))
 
 
@@ -2485,7 +2813,7 @@ def close_trade(symbol):
         return redirect(url_for("index"))
 
     entry = float(item["price"])
-    pnl_pct = (curr - entry) / entry * 100
+    pnl_pct = (curr - entry) / entry * 100 if entry else 0
 
     logs.append({
         "symbol": item["symbol"],
@@ -2503,7 +2831,9 @@ def close_trade(symbol):
         "egg_zone": item.get("egg_zone", "-"),
         "wave_stage": item.get("wave_stage", "-"),
         "candle_signal": item.get("candle_signal", "-"),
-        "breakout_state": item.get("breakout_state", "-")
+        "breakout_state": item.get("breakout_state", "-"),
+        "highest_since_entry": item.get("highest_since_entry", "-"),
+        "dynamic_trailing_stop": item.get("dynamic_trailing_stop", "-")
     })
 
     tracks = [x for x in tracks if x["symbol"] != symbol]
