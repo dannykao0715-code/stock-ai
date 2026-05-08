@@ -115,10 +115,12 @@ hr {
 
 .table th {
     color: #facc15;
+    white-space: nowrap;
 }
 
 .table td {
     color: #e5e7eb;
+    vertical-align: middle;
 }
 
 .badge {
@@ -138,15 +140,9 @@ hr {
     font-weight: 900;
 }
 
-.badge-elite {
-    background: #facc15;
-    color: #111827;
-    font-weight: 900;
-}
-
-.badge-s {
-    background: #7c3aed;
-    color: #ffffff;
+.badge-watch {
+    background: #334155;
+    color: #e2e8f0;
     font-weight: 900;
 }
 
@@ -178,14 +174,6 @@ hr {
     height: 100%;
 }
 
-.simple-card {
-    background: #101827;
-    border: 1px solid #334155;
-    border-radius: 18px;
-    padding: 18px;
-    height: 100%;
-}
-
 .plan-title {
     font-size: 22px;
     font-weight: 900;
@@ -212,6 +200,19 @@ hr {
     color: #ef4444;
     font-weight: 900;
 }
+
+.top-summary {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 14px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+
+.mobile-note {
+    color: #94a3b8;
+    font-size: 13px;
+}
 </style>
 </head>
 
@@ -221,23 +222,25 @@ hr {
 
 <h2>💰 AI選股 + AI交易計畫 + AI持股管理系統</h2>
 
-<div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
-<div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
+<div class="top-summary mt-3">
+    <div class="info-line">🕒 網站時間：{{ now }}</div>
+    <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
 
-<div class="info-line">
-    🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
-    風險開關：
-    {% if allow_new_positions %}
-        <span class="risk-on">{{ risk_switch }}</span>
-    {% else %}
-        <span class="risk-off">{{ risk_switch }}</span>
-    {% endif %}
-    ｜ 部位倍率：{{ risk_multiplier }}
-</div>
+    <div class="info-line">
+        🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
+        風險開關：
+        {% if allow_new_positions %}
+            <span class="risk-on">{{ risk_switch }}</span>
+        {% else %}
+            <span class="risk-off">{{ risk_switch }}</span>
+        {% endif %}
+        ｜ 部位倍率：{{ risk_multiplier }}
+    </div>
 
-<div class="info-line">
-    📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜
-    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級候選：{{ a_count }} ｜ AI候選：{{ candidate_count }}
+    <div class="info-line">
+        📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜
+        今日進場提醒：{{ entry_alerts|length }} 檔 ｜ 已追蹤：{{ tracks|length }} 檔 ｜ AI候選：{{ candidate_count }} 檔
+    </div>
 </div>
 
 <div class="my-3">
@@ -303,7 +306,7 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-目前沒有進場提醒。系統會持續追蹤候選觀察池，等狀態轉強後自動列入這裡。
+目前沒有進場提醒。符合策略的股票會先自動進入 AI候選觀察池，等達到進場條件後才會跳到這裡。
 </div>
 {% endif %}
 
@@ -386,99 +389,8 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-目前沒有加入追蹤的股票。當進場提醒出現後，可以按「加入追蹤」，讓AI開始管理停損、移動停利與滿足點。
+目前沒有加入追蹤的股票。進場提醒出現後，按「加入追蹤」，AI會開始管理移動停利、停損出場與波段滿足點。
 </div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">🎯 今日精選｜最多 3 檔</h4>
-
-{% if elite_results %}
-<div class="row">
-{% for r in elite_results %}
-<div class="col-lg-4 col-md-6 mb-3">
-    <div class="simple-card">
-
-        <span class="badge badge-elite mb-2">今日精選</span>
-
-        <div class="plan-title">{{ r.name }}</div>
-        <div class="small-text mb-2">{{ r.symbol }} ｜ {{ r.sector }} ｜ {{ r.level }}</div>
-
-        <hr>
-
-        <div>現價：<span class="big-price">{{ r.price }}</span></div>
-        <div>綜合分數：<span class="score">{{ r.score }}</span></div>
-        <div>買點型態：<span class="warning">{{ r.buy_type }}</span></div>
-        <div>進場狀態：<span class="good">{{ r.entry_status }}</span></div>
-
-        <hr>
-
-        <div class="label">AI交易計畫</div>
-        <div>支撐點：<span class="blue">{{ r.support_price }}</span></div>
-        <div>明日進場區間：<span class="warning">{{ r.next_entry_low }} ～ {{ r.next_entry_high }}</span></div>
-        <div>跌破不進場：<span class="bad">{{ r.no_entry_price }}</span></div>
-        <div>初始停損：<span class="bad">{{ r.initial_stop }}</span></div>
-        <div>風報比：{{ r.risk_reward }}</div>
-
-        <hr>
-
-        <div>雞蛋位階：{{ r.egg_zone }} ｜ {{ r.egg_position_pct }}%</div>
-        <div>K棒：{{ r.candle_signal }}</div>
-        <div>突破狀態：{{ r.breakout_state }}</div>
-        <div>流動性：{{ r.liquidity_level }} ｜ {{ r.avg_volume_20_lots }}張</div>
-        <div>主力資金：{{ r.money_ratio }}倍 ｜ {{ r.main_buy_days }}天承接</div>
-
-        <a href="/track/{{ r.symbol }}" class="btn btn-warning mt-3 w-100">加入追蹤</a>
-    </div>
-</div>
-{% endfor %}
-</div>
-{% else %}
-<div class="alert alert-secondary">目前沒有今日精選股票。</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">🏆 S級優先觀察</h4>
-
-{% if s_results %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>族群</th>
-<th>狀態</th>
-<th>買點</th>
-<th>分數</th>
-<th>明日進場區間</th>
-<th>跌破不進場</th>
-<th>支撐點</th>
-<th>風報比</th>
-<th>操作</th>
-</tr>
-</thead>
-<tbody>
-{% for r in s_results %}
-<tr>
-<td>{{ r.name }}<br><span class="small-text">{{ r.symbol }}</span></td>
-<td>{{ r.sector }}</td>
-<td><span class="good">{{ r.entry_status }}</span></td>
-<td>{{ r.buy_type }}</td>
-<td>{{ r.score }}</td>
-<td><span class="warning">{{ r.next_entry_low }} ～ {{ r.next_entry_high }}</span></td>
-<td><span class="bad">{{ r.no_entry_price }}</span></td>
-<td>{{ r.support_price }}</td>
-<td>{{ r.risk_reward }}</td>
-<td><a href="/track/{{ r.symbol }}" class="btn btn-warning btn-sm">追蹤</a></td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">目前沒有S級股票。</div>
 {% endif %}
 
 <hr>
@@ -523,6 +435,10 @@ hr {
 <hr>
 
 <h4 class="section-title">📌 AI候選觀察池｜自動追蹤中</h4>
+
+<div class="mobile-note mb-2">
+這裡只是候選觀察，不代表明天可進場；等條件成熟後，系統會自動跳到上方「今日進場提醒｜AI交易計畫」。
+</div>
 
 {% if candidate_pool %}
 <div class="table-responsive">
@@ -627,7 +543,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版整合：AI選股、明日開盤交易計畫、AI候選觀察池、AI持股管理、移動停利區間、停損通知、波浪滿足點、雞蛋位階與滿足點提醒。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已隱藏今日精選與S/A名單，改成實戰流程：候選觀察 → 進場提醒交易計畫 → 加入追蹤 → AI持股管理。
 </div>
 
 </div>
