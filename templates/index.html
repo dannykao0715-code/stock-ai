@@ -1,1015 +1,621 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
-<meta charset="UTF-8">
-<title>法人級 AI 選股系統</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>AI 選股系統｜實戰策略版</title>
 
-<script>
-setInterval(function(){
-    location.reload();
-}, 300000);
-</script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
 
-<style>
-body {
-    background: #07111f;
-    color: #e5e7eb;
-}
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", Arial, sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+        }
 
-.container {
-    max-width: 1500px;
-}
+        .container {
+            max-width: 1500px;
+            margin: 0 auto;
+            padding: 22px;
+        }
 
-.card {
-    background: #101827;
-    border: 1px solid #334155;
-    border-radius: 18px;
-    color: #e5e7eb;
-    box-shadow: 0 0 18px rgba(0,0,0,0.35);
-}
+        .header {
+            background: linear-gradient(135deg, #1e293b, #111827);
+            border: 1px solid #334155;
+            border-radius: 22px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+        }
 
-.card:hover {
-    border-color: #38bdf8;
-}
+        h1 {
+            margin: 0 0 10px;
+            font-size: 30px;
+            letter-spacing: 0.5px;
+        }
 
-h2, h4, h5 {
-    color: #ffffff;
-}
+        .subtitle {
+            color: #cbd5e1;
+            line-height: 1.7;
+            font-size: 15px;
+        }
 
-hr {
-    border-color: #334155;
-}
+        .badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+        }
 
-.score {
-    font-size: 34px;
-    font-weight: 900;
-    color: #facc15;
-}
+        .badge {
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #1e293b;
+            border: 1px solid #475569;
+            color: #dbeafe;
+            font-size: 13px;
+        }
 
-.level-s {
-    color: #facc15;
-    font-weight: 900;
-}
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+        }
 
-.level-a {
-    color: #38bdf8;
-    font-weight: 900;
-}
+        .btn {
+            display: inline-block;
+            text-decoration: none;
+            padding: 11px 15px;
+            border-radius: 14px;
+            font-weight: 700;
+            font-size: 14px;
+            border: 1px solid #475569;
+            color: #f8fafc;
+            background: #1e293b;
+            cursor: pointer;
+        }
 
-.elite-title {
-    color: #facc15;
-    font-weight: 900;
-}
+        .btn:hover {
+            filter: brightness(1.12);
+        }
 
-.good {
-    color: #22c55e;
-    font-weight: bold;
-}
+        .btn-primary {
+            background: #2563eb;
+            border-color: #3b82f6;
+        }
 
-.bad {
-    color: #ef4444;
-    font-weight: bold;
-}
+        .warning {
+            margin-top: 14px;
+            color: #fcd34d;
+            font-size: 13px;
+            line-height: 1.7;
+        }
 
-.warning {
-    color: #f59e0b;
-    font-weight: bold;
-}
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
 
-.blue {
-    color: #38bdf8;
-    font-weight: bold;
-}
+        .stat {
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 18px;
+            padding: 18px;
+        }
 
-.purple {
-    color: #c084fc;
-    font-weight: bold;
-}
+        .stat-title {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
 
-.small-text {
-    font-size: 13px;
-    color: #cbd5e1;
-}
+        .stat-value {
+            font-size: 22px;
+            font-weight: 800;
+        }
 
-.info-line {
-    color: #e2e8f0;
-    line-height: 1.8;
-}
+        .section {
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 22px;
+            padding: 20px;
+            margin-bottom: 22px;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+        }
 
-.badge {
-    margin: 2px;
-    font-size: 12px;
-}
+        .section-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+            gap: 10px;
+        }
 
-.badge-main {
-    background: #0369a1;
-    color: #e0f2fe;
-}
+        h2 {
+            margin: 0;
+            font-size: 22px;
+        }
 
-.badge-tech {
-    background: #15803d;
-    color: #dcfce7;
-}
+        .hint {
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.6;
+        }
 
-.badge-inst {
-    background: #7c3aed;
-    color: #ede9fe;
-}
+        .table-wrap {
+            overflow-x: auto;
+            border-radius: 16px;
+            border: 1px solid #334155;
+        }
 
-.badge-sector {
-    background: #ca8a04;
-    color: #fef9c3;
-}
+        table {
+            width: 100%;
+            min-width: 1250px;
+            border-collapse: collapse;
+            background: #020617;
+        }
 
-.badge-warn {
-    background: #b91c1c;
-    color: #fee2e2;
-}
+        th {
+            background: #1e293b;
+            color: #cbd5e1;
+            text-align: left;
+            padding: 12px;
+            font-size: 13px;
+            white-space: nowrap;
+            border-bottom: 1px solid #334155;
+        }
 
-.badge-elite {
-    background: #facc15;
-    color: #111827;
-    font-weight: 900;
-}
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #1f2937;
+            vertical-align: top;
+            font-size: 14px;
+            line-height: 1.5;
+        }
 
-.badge-entry {
-    background: #0ea5e9;
-    color: #e0f2fe;
-    font-weight: 900;
-}
+        tr:hover {
+            background: #0f172a;
+        }
 
-.badge-wait {
-    background: #f59e0b;
-    color: #111827;
-    font-weight: 900;
-}
+        small {
+            color: #94a3b8;
+        }
 
-.badge-danger-status {
-    background: #dc2626;
-    color: #fee2e2;
-    font-weight: 900;
-}
+        .stock-code {
+            font-size: 16px;
+            font-weight: 800;
+            color: #f8fafc;
+        }
 
-.section-title {
-    margin-top: 28px;
-    margin-bottom: 12px;
-    font-weight: 700;
-    color: #ffffff;
-}
+        .stock-name {
+            color: #94a3b8;
+            font-size: 13px;
+        }
 
-.alert-info {
-    background: #0c4a6e;
-    color: #e0f2fe;
-    border: 1px solid #38bdf8;
-}
+        .grade-s {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: #f59e0b;
+            color: #111827;
+            font-weight: 900;
+        }
 
-.alert-warning {
-    background: #78350f;
-    color: #fde68a;
-    border: 1px solid #f59e0b;
-}
+        .grade-a {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: #38bdf8;
+            color: #082f49;
+            font-weight: 900;
+        }
 
-.alert-secondary {
-    background: #1e293b;
-    color: #e2e8f0;
-    border: 1px solid #475569;
-}
+        .action-buy {
+            color: #86efac;
+            font-weight: 800;
+        }
 
-.alert-success {
-    background: #14532d;
-    color: #dcfce7;
-    border: 1px solid #22c55e;
-}
+        .action-wait {
+            color: #fcd34d;
+            font-weight: 800;
+        }
 
-.alert-danger {
-    background: #7f1d1d;
-    color: #fee2e2;
-    border: 1px solid #ef4444;
-}
+        .empty {
+            color: #94a3b8;
+            background: #020617;
+            border: 1px dashed #334155;
+            border-radius: 16px;
+            padding: 22px;
+            line-height: 1.7;
+        }
 
-.table {
-    color: #e5e7eb;
-}
+        .loading {
+            color: #93c5fd;
+            background: #020617;
+            border: 1px solid #1d4ed8;
+            border-radius: 16px;
+            padding: 18px;
+            margin-bottom: 18px;
+            line-height: 1.7;
+        }
 
-.table th {
-    color: #facc15;
-}
+        .error {
+            color: #fecaca;
+            background: #450a0a;
+            border: 1px solid #991b1b;
+            border-radius: 16px;
+            padding: 18px;
+            margin-bottom: 18px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+        }
 
-.table td {
-    color: #e5e7eb;
-}
+        .footer-note {
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.8;
+            margin-top: 16px;
+        }
 
-.top-card {
-    background: linear-gradient(135deg, #111827, #0f172a);
-}
+        .strategy-box {
+            background: #020617;
+            border: 1px solid #334155;
+            border-radius: 18px;
+            padding: 16px;
+            color: #cbd5e1;
+            line-height: 1.8;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
 
-.elite-card {
-    background: linear-gradient(135deg, #1e1b4b, #111827);
-    border-color: #facc15;
-}
+        @media (max-width: 1100px) {
+            .stats {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
 
-.btn-warning {
-    font-weight: bold;
-}
+        @media (max-width: 900px) {
+            .container {
+                padding: 14px;
+            }
 
-.btn-refresh {
-    background: #2563eb;
-    color: #ffffff;
-    font-weight: bold;
-    border: none;
-}
+            h1 {
+                font-size: 24px;
+            }
 
-.btn-refresh:hover {
-    background: #1d4ed8;
-    color: #ffffff;
-}
+            .section-title {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
 
-.level-card-s {
-    border-color: #facc15;
-}
+        @media (max-width: 520px) {
+            .stats {
+                grid-template-columns: 1fr;
+            }
 
-.level-card-a {
-    border-color: #38bdf8;
-}
+            h1 {
+                font-size: 22px;
+            }
 
-.metric-box {
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 8px;
-    margin-bottom: 6px;
-}
+            .btn {
+                width: 100%;
+                text-align: center;
+            }
 
-.trade-box {
-    background: #111827;
-    border: 1px solid #38bdf8;
-    border-radius: 12px;
-    padding: 10px;
-    margin-bottom: 8px;
-}
-
-.advanced-box {
-    background: #111827;
-    border: 1px solid #facc15;
-    border-radius: 12px;
-    padding: 10px;
-    margin-bottom: 8px;
-}
-
-.risk-on {
-    color: #22c55e;
-    font-weight: 900;
-}
-
-.risk-off {
-    color: #ef4444;
-    font-weight: 900;
-}
-
-.rank-number {
-    color: #facc15;
-    font-weight: 900;
-}
-</style>
+            .stat-value {
+                font-size: 20px;
+            }
+        }
+    </style>
 </head>
 
 <body>
+    <div class="container">
 
-<div class="container py-4">
+        <div class="header">
+            <h1>AI 選股系統｜實戰策略最終整合版</h1>
 
-<h2>💰 完整法人級 AI 選股系統</h2>
-
-<div class="info-line mt-2">🕒 網站時間：{{ now }}</div>
-<div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
-
-<div class="info-line">
-    🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
-    風險開關：
-    {% if allow_new_positions %}
-        <span class="risk-on">{{ risk_switch }}</span>
-    {% else %}
-        <span class="risk-off">{{ risk_switch }}</span>
-    {% endif %}
-    ｜ 部位倍率：{{ risk_multiplier }}
-</div>
-
-<div class="info-line">
-    📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜
-    今日精選：{{ elite_count }} ｜ S級：{{ s_count }} ｜ A級：{{ a_count }} ｜ AI候選：{{ candidate_count }}
-</div>
-
-<div class="my-3">
-    <a href="/scan-now" class="btn btn-success me-2">立即重新掃描</a>
-    <button onclick="location.reload()" class="btn btn-refresh">重新整理</button>
-</div>
-
-<div class="alert alert-info">
-    掃描狀態：{{ scan_message }}<br>
-    狀態時間：{{ scan_status_time }}
-</div>
-
-<div class="alert alert-warning">
-    {{ risk_note }}
-</div>
-
-<hr>
-
-<h4 class="section-title">🚨 今日進場提醒</h4>
-
-{% if entry_alerts %}
-<div class="row">
-{% for a in entry_alerts %}
-<div class="col-lg-4 col-md-6 mb-3">
-    <div class="card p-3 h-100" style="border-color:#22c55e;">
-        <span class="badge badge-entry mb-2">{{ a.alert_type }}</span>
-        <h5>{{ a.name }}</h5>
-        <div class="small-text">{{ a.symbol }} ｜ {{ a.sector }} ｜ {{ a.level }}</div>
-        <hr>
-        <div>狀態變化：<span class="warning">{{ a.previous_status }}</span> → <span class="good">{{ a.current_status }}</span></div>
-        <div>買點：<span class="warning">{{ a.buy_type }}</span></div>
-        <div>進場點：<span class="warning">{{ a.entry_price }}</span></div>
-        <div>確認點：<span class="blue">{{ a.confirm_price }}</span></div>
-        <div>初始停損：<span class="bad">{{ a.initial_stop }}</span></div>
-        <div>移動停利：<span class="good">{{ a.trailing_stop }}</span></div>
-        <div>風報比：{{ a.risk_reward }}</div>
-        <div>進場檢查分：{{ a.entry_check_score }}</div>
-        <div>法人強度：{{ a.inst_strength_level }} ｜ 法人買超強度：{{ a.total_inst_intensity }}%</div>
-        <div>流動性：{{ a.liquidity_level }} ｜ 20日均量：{{ a.avg_volume_20_lots }} 張</div>
-        <div class="small-text mt-2">{{ a.alert_note }}</div>
-        <a href="/track-candidate/{{ a.symbol }}" class="btn btn-warning mt-3">加入追蹤</a>
-    </div>
-</div>
-{% endfor %}
-</div>
-{% else %}
-<div class="alert alert-secondary">目前沒有候選股轉為進場提醒。</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">📌 AI候選追蹤池</h4>
-
-{% if candidate_pool %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>等級</th>
-<th>族群</th>
-<th>前次狀態</th>
-<th>目前狀態</th>
-<th>買點</th>
-<th>分數</th>
-<th>進場點</th>
-<th>停損</th>
-<th>風報比</th>
-<th>法人強度</th>
-<th>流動性</th>
-<th>位階</th>
-<th>K棒</th>
-<th>操作</th>
-</tr>
-</thead>
-<tbody>
-{% for c in candidate_pool %}
-<tr>
-<td>{{ c.name }}<br><span class="small-text">{{ c.symbol }}</span></td>
-<td>{{ c.level }}</td>
-<td>{{ c.sector }}</td>
-<td>{{ c.previous_status }}</td>
-<td>
-{% if c.current_status == "可觀察進場" %}
-<span class="good">{{ c.current_status }}</span>
-{% else %}
-<span class="warning">{{ c.current_status }}</span>
-{% endif %}
-</td>
-<td>{{ c.buy_type }}</td>
-<td>{{ c.score }}</td>
-<td>{{ c.entry_price }}</td>
-<td class="bad">{{ c.initial_stop }}</td>
-<td>{{ c.risk_reward }}</td>
-<td>{{ c.inst_strength_level }}<br><span class="small-text">{{ c.total_inst_intensity }}%</span></td>
-<td>{{ c.liquidity_level }}<br><span class="small-text">{{ c.avg_volume_20_lots }}張</span></td>
-<td>{{ c.egg_zone }}</td>
-<td>{{ c.candle_signal }}</td>
-<td><a href="/track-candidate/{{ c.symbol }}" class="btn btn-warning btn-sm">追蹤</a></td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">目前沒有AI候選追蹤股。</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">⚠️ 候選失效提醒</h4>
-
-{% if invalid_alerts %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>族群</th>
-<th>前狀態</th>
-<th>目前狀態</th>
-<th>原因</th>
-<th>更新時間</th>
-</tr>
-</thead>
-<tbody>
-{% for x in invalid_alerts %}
-<tr>
-<td>{{ x.name }}<br><span class="small-text">{{ x.symbol }}</span></td>
-<td>{{ x.sector }}</td>
-<td>{{ x.previous_status }}</td>
-<td><span class="bad">{{ x.current_status }}</span></td>
-<td>{{ x.alert_note }}</td>
-<td>{{ x.updated_at }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">目前沒有候選失效提醒。</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">📊 策略統計儀表板</h4>
-
-<div class="alert alert-info">
-    {{ strategy_dashboard.best_strategy_note }}<br>
-    {{ strategy_dashboard.worst_strategy_note }}
-</div>
-
-<div class="row">
-    <div class="col-lg-4 mb-3">
-        <div class="card p-3 h-100">
-            <h5>依等級統計</h5>
-            {% if strategy_dashboard.by_level %}
-            <div class="table-responsive">
-            <table class="table table-dark table-bordered">
-            <thead>
-            <tr>
-                <th>等級</th>
-                <th>筆數</th>
-                <th>勝率</th>
-                <th>均報酬</th>
-                <th>期望值</th>
-            </tr>
-            </thead>
-            <tbody>
-            {% for x in strategy_dashboard.by_level %}
-            <tr>
-                <td>{{ x.name }}</td>
-                <td>{{ x.count }}</td>
-                <td>{{ x.winrate }}%</td>
-                <td>{{ x.avg_return }}%</td>
-                <td>{{ x.expectancy }}%</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-            </table>
+            <div class="subtitle">
+                核心邏輯：突破不追高、等回採、回採前高不破、雞蛋位階、K棒確認、波段位置。<br />
+                本版排除 B 級股、過熱股、乖離過大股，避免系統為了硬選而選出雜訊。
             </div>
-            {% else %}
-            <div class="small-text">尚無資料。</div>
-            {% endif %}
-        </div>
-    </div>
 
-    <div class="col-lg-4 mb-3">
-        <div class="card p-3 h-100">
-            <h5>依買點類型統計</h5>
-            {% if strategy_dashboard.by_buy_type %}
-            <div class="table-responsive">
-            <table class="table table-dark table-bordered">
-            <thead>
-            <tr>
-                <th>買點</th>
-                <th>筆數</th>
-                <th>勝率</th>
-                <th>均報酬</th>
-                <th>期望值</th>
-            </tr>
-            </thead>
-            <tbody>
-            {% for x in strategy_dashboard.by_buy_type %}
-            <tr>
-                <td>{{ x.name }}</td>
-                <td>{{ x.count }}</td>
-                <td>{{ x.winrate }}%</td>
-                <td>{{ x.avg_return }}%</td>
-                <td>{{ x.expectancy }}%</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-            </table>
+            <div class="badges">
+                <div class="badge">只顯示 S / A</div>
+                <div class="badge">B級完全排除</div>
+                <div class="badge">過熱股排除</div>
+                <div class="badge">突破後不追高</div>
+                <div class="badge">支撐回採確認</div>
+                <div class="badge">快取20分鐘</div>
             </div>
-            {% else %}
-            <div class="small-text">尚無資料。</div>
-            {% endif %}
-        </div>
-    </div>
 
-    <div class="col-lg-4 mb-3">
-        <div class="card p-3 h-100">
-            <h5>依族群統計</h5>
-            {% if strategy_dashboard.by_sector %}
-            <div class="table-responsive">
-            <table class="table table-dark table-bordered">
-            <thead>
-            <tr>
-                <th>族群</th>
-                <th>筆數</th>
-                <th>勝率</th>
-                <th>均報酬</th>
-                <th>期望值</th>
-            </tr>
-            </thead>
-            <tbody>
-            {% for x in strategy_dashboard.by_sector %}
-            <tr>
-                <td>{{ x.name }}</td>
-                <td>{{ x.count }}</td>
-                <td>{{ x.winrate }}%</td>
-                <td>{{ x.avg_return }}%</td>
-                <td>{{ x.expectancy }}%</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-            </table>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="loadData(true)">重新掃描</button>
+                <button class="btn" onclick="loadData(false)">重新整理</button>
+                <a class="btn" href="/api/recommendations" target="_blank">JSON資料</a>
+                <a class="btn" href="/health" target="_blank">系統狀態</a>
             </div>
-            {% else %}
-            <div class="small-text">尚無資料。</div>
-            {% endif %}
-        </div>
-    </div>
-</div>
 
-<hr>
-
-<h4 class="section-title">📊 績效與資金控管總覽</h4>
-
-<div class="row mb-3">
-    <div class="col-md-3 mb-3">
-        <div class="card top-card p-3">
-            <div class="small-text">追蹤勝率</div>
-            <div class="score">{{ winrate }}%</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="card top-card p-3">
-            <div class="small-text">追蹤平均報酬</div>
-            <div class="score">{{ avg }}%</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="card top-card p-3">
-            <div class="small-text">交易日誌勝率</div>
-            <div class="score">{{ trade_stats.trade_winrate }}%</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="card top-card p-3">
-            <div class="small-text">交易平均報酬</div>
-            <div class="score">{{ trade_stats.trade_avg_return }}%</div>
-        </div>
-    </div>
-</div>
-
-<div class="alert alert-secondary">
-    本金設定：{{ account_size }} 元 ｜ 原始單筆風險：{{ risk_per_trade }}% ｜
-    市場調整部位倍率：{{ risk_multiplier }} ｜
-    流動性門檻：20日均量至少 {{ min_avg_volume_lots }} 張、20日均成交金額至少 {{ min_avg_amount }} 元 ｜
-    已結案交易：{{ trade_stats.trade_count }} 筆 ｜
-    最佳買點類型：{{ trade_stats.best_buy_type }} ｜
-    最佳等級：{{ trade_stats.best_level }}
-</div>
-
-<hr>
-
-<h4 class="section-title">🔥 族群輪動排行榜 TOP 10</h4>
-
-{% if sector_rankings %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>排名</th>
-<th>族群</th>
-<th>族群分</th>
-<th>5日均漲幅</th>
-<th>20日均漲幅</th>
-<th>主力均分</th>
-<th>法人均分</th>
-<th>流動性均分</th>
-<th>強勢比例</th>
-<th>樣本數</th>
-</tr>
-</thead>
-<tbody>
-{% for s in sector_rankings %}
-<tr>
-<td class="rank-number">{{ s.rank }}</td>
-<td>{{ s.sector }}</td>
-<td class="warning">{{ s.sector_score }}</td>
-<td>{{ s.sector_avg_5d }}%</td>
-<td>{{ s.sector_avg_20d }}%</td>
-<td>{{ s.sector_avg_main }}</td>
-<td>{{ s.sector_avg_inst }}</td>
-<td>{{ s.sector_avg_liquidity }}</td>
-<td>{{ s.sector_strong_ratio }}%</td>
-<td>{{ s.sector_stock_count }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">目前尚無族群排行資料。</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">📉 追蹤清單｜動態移動停利</h4>
-
-{% if tracks %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>成本</th>
-<th>現價</th>
-<th>損益</th>
-<th>等級</th>
-<th>買點</th>
-<th>進場點</th>
-<th>初始停損</th>
-<th>進場後最高</th>
-<th>動態移動停利</th>
-<th>訊號</th>
-<th>日期</th>
-<th>操作</th>
-</tr>
-</thead>
-
-<tbody>
-{% for t in tracks %}
-<tr>
-<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
-<td>{{ t.price }}</td>
-<td>{{ t.curr }}</td>
-
-<td>
-{% if t.pnl != "-" and t.pnl > 0 %}
-<span class="good">{{ t.pnl }}%</span>
-{% elif t.pnl != "-" and t.pnl < 0 %}
-<span class="bad">{{ t.pnl }}%</span>
-{% else %}
-{{ t.pnl }}
-{% endif %}
-</td>
-
-<td>{{ t.level }}</td>
-<td>{{ t.buy_type }}</td>
-<td>{{ t.entry_price }}</td>
-<td class="bad">{{ t.initial_stop }}</td>
-<td class="blue">{{ t.highest_since_entry }}</td>
-<td class="warning">{{ t.dynamic_trailing_stop }}</td>
-
-<td>
-{% if t.signal == "停損" or t.signal == "風險警戒" %}
-<span class="bad">{{ t.signal }}</span>
-{% elif t.signal == "第一階段停利" or t.signal == "第二階段停利" or t.signal == "可分批獲利" or t.signal == "移動停利" %}
-<span class="good">{{ t.signal }}</span>
-{% else %}
-{{ t.signal }}
-{% endif %}
-</td>
-
-<td>{{ t.date }}</td>
-
-<td>
-<a href="/close-trade/{{ t.symbol }}" class="btn btn-success btn-sm mb-1">結案</a>
-<a href="/untrack/{{ t.symbol }}" class="btn btn-danger btn-sm mb-1">刪除</a>
-</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">
-目前沒有追蹤股票。
-</div>
-{% endif %}
-
-<hr>
-
-<h4 class="section-title">📘 最近交易日誌</h4>
-
-{% if trade_logs %}
-<div class="table-responsive">
-<table class="table table-dark table-bordered align-middle">
-<thead>
-<tr>
-<th>股票</th>
-<th>進場</th>
-<th>出場</th>
-<th>損益</th>
-<th>等級</th>
-<th>買點</th>
-<th>族群</th>
-<th>法人強度</th>
-<th>流動性</th>
-<th>位階</th>
-<th>波段</th>
-<th>K棒</th>
-<th>突破狀態</th>
-<th>最高價</th>
-<th>移動停利</th>
-<th>進場日</th>
-<th>出場日</th>
-</tr>
-</thead>
-<tbody>
-{% for t in trade_logs %}
-<tr>
-<td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
-<td>{{ t.entry_price }}</td>
-<td>{{ t.exit_price }}</td>
-<td>
-{% if t.pnl_pct > 0 %}
-<span class="good">{{ t.pnl_pct }}%</span>
-{% elif t.pnl_pct < 0 %}
-<span class="bad">{{ t.pnl_pct }}%</span>
-{% else %}
-{{ t.pnl_pct }}%
-{% endif %}
-</td>
-<td>{{ t.level }}</td>
-<td>{{ t.buy_type }}</td>
-<td>{{ t.sector }}</td>
-<td>{{ t.inst_strength_level }}</td>
-<td>{{ t.liquidity_level }}</td>
-<td>{{ t.egg_zone }}</td>
-<td>{{ t.wave_stage }}</td>
-<td>{{ t.candle_signal }}</td>
-<td>{{ t.breakout_state }}</td>
-<td>{{ t.highest_since_entry }}</td>
-<td>{{ t.dynamic_trailing_stop }}</td>
-<td>{{ t.entry_date }}</td>
-<td>{{ t.exit_date }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<div class="alert alert-secondary">目前還沒有已結案交易。</div>
-{% endif %}
-
-<hr>
-
-{% macro entry_badge(status) %}
-    {% if status == "可觀察進場" %}
-        <span class="badge badge-entry">{{ status }}</span>
-    {% elif status == "等拉回" or status == "等突破" or status == "僅列觀察" or status == "等回採" or status == "等轉強K" %}
-        <span class="badge badge-wait">{{ status }}</span>
-    {% else %}
-        <span class="badge badge-danger-status">{{ status }}</span>
-    {% endif %}
-{% endmacro %}
-
-{% macro stock_cards(results, title, level_class, card_class, empty_text, elite=False) %}
-<h4 class="section-title">{{ title }}</h4>
-
-{% if results %}
-<div class="row">
-{% for r in results %}
-<div class="col-lg-4 col-md-6 mb-3">
-    <div class="card {{ card_class }} p-3 h-100">
-
-        {% if elite %}
-        <span class="badge badge-elite mb-2">今日精選</span>
-        {% endif %}
-
-        <h5>{{ r.name }}</h5>
-        <div class="small-text">{{ r.symbol }} ｜ {{ r.sector }} ｜ 族群排名：{{ r.sector_rank }}</div>
-
-        <hr>
-
-        <div>等級：<span class="{{ level_class }}">{{ r.level }}</span></div>
-        <div>現價：<b>{{ r.price }}</b></div>
-        <div>5日漲幅：<span class="blue">{{ r.change_5d }}%</span></div>
-        <div>20日漲幅：<span class="blue">{{ r.change_20d }}%</span></div>
-        <div>距月線：{{ r.ma20_distance }}%</div>
-        <div>距季線：{{ r.ma60_distance }}%</div>
-        <div>ATR 波動：{{ r.atr_pct }}%</div>
-
-        <div class="mt-2">綜合分數</div>
-        <div class="score">{{ r.score }}</div>
-
-        <div class="trade-box">
-            <div>買點類型：<span class="warning">{{ r.buy_type }}</span></div>
-            <div>進場狀態：{{ entry_badge(r.entry_status) }}</div>
-            <div class="small-text mt-2">{{ r.entry_reason }}</div>
+            <div class="warning">
+                提醒：這是策略篩選系統，不是保證獲利訊號。實際進場仍需搭配大盤環境、成交量、停損位置與個人資金控管。
+            </div>
         </div>
 
-        <div class="advanced-box">
-            <div>雞蛋位階：<span class="warning">{{ r.egg_zone }}</span> ｜ 位階 {{ r.egg_position_pct }}%</div>
-            <div class="small-text">{{ r.egg_note }}</div>
-            <hr>
-            <div>波段位置：<span class="blue">{{ r.wave_stage }}</span></div>
-            <div class="small-text">{{ r.wave_note }}</div>
-            <hr>
-            <div>K棒型態：<span class="purple">{{ r.candle_signal }}</span></div>
-            <div class="small-text">{{ r.candle_note }}</div>
-            <hr>
-            <div>突破狀態：<span class="good">{{ r.breakout_state }}</span></div>
-            <div>20日前高：{{ r.prev_high_20 }}</div>
-            <div>60日前高：{{ r.prev_high_60 }}</div>
-            <div>前高壓力：{{ r.breakout_level }}</div>
-            <div>回採低點：{{ r.pullback_low }}</div>
-            <div class="small-text">{{ r.breakout_note }}</div>
+        <div id="message" class="loading">
+            正在讀取選股資料，請稍候……
         </div>
 
-        {% if elite and r.elite_reason %}
-        <div class="alert alert-info mt-2">
-            {{ r.elite_reason }}
-        </div>
-        {% endif %}
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-title">目前時間</div>
+                <div class="stat-value" id="currentTime">--</div>
+            </div>
 
-        <div class="metric-box">
-            <div>技術分：<span class="blue">{{ r.technical_score }}</span></div>
-            <div>主力資金分：<span class="purple">{{ r.main_score }}</span></div>
-            <div>法人籌碼分：<span class="good">{{ r.inst_score }}</span></div>
-            <div>族群強度分：<span class="warning">{{ r.sector_score }}</span></div>
-            <div>流動性分：<span class="blue">{{ r.liquidity_score }}</span></div>
-            <div>進場檢查分：<span class="warning">{{ r.entry_check_score }}</span></div>
-            <div>風報比：<span class="good">{{ r.risk_reward }}</span></div>
-        </div>
+            <div class="stat">
+                <div class="stat-title">資料更新</div>
+                <div class="stat-value" id="updatedAt">--</div>
+            </div>
 
-        <hr>
+            <div class="stat">
+                <div class="stat-title">掃描股票數</div>
+                <div class="stat-value" id="rawCount">--</div>
+            </div>
 
-        <div class="small-text">法人籌碼強度</div>
-        <div>法人強度等級：<span class="warning">{{ r.inst_strength_level }}</span></div>
-        <div>法人合計淨買賣：{{ r.total_net }}</div>
-        <div>法人買超強度：{{ r.total_inst_intensity }}%</div>
-        <div>外資強度：{{ r.foreign_intensity }}%</div>
-        <div>投信強度：{{ r.trust_intensity }}%</div>
-        <div>自營商強度：{{ r.dealer_intensity }}%</div>
+            <div class="stat">
+                <div class="stat-title">符合條件數</div>
+                <div class="stat-value" id="resultCount">--</div>
+            </div>
 
-        <div class="mt-2">
-            {% for s in r.inst_signals %}
-                <span class="badge badge-inst">{{ s }}</span>
-            {% endfor %}
+            <div class="stat">
+                <div class="stat-title">掃描耗時</div>
+                <div class="stat-value" id="scanSeconds">--</div>
+            </div>
         </div>
 
-        <hr>
-
-        <div class="small-text">流動性過濾</div>
-        <div>流動性等級：<span class="blue">{{ r.liquidity_level }}</span></div>
-        <div>5日均量：{{ r.avg_volume_5 }}</div>
-        <div>20日均量：{{ r.avg_volume_20_lots }} 張</div>
-        <div>20日均成交金額：{{ r.avg_amount_20 }}</div>
-        {% if r.liquidity_warnings %}
-        <div class="mt-2">
-            {% for w in r.liquidity_warnings %}
-                <span class="badge badge-warn">{{ w }}</span>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        <hr>
-
-        <div class="small-text">明確交易計畫</div>
-        <div>明確進場點：<span class="warning">{{ r.entry_price }}</span></div>
-        <div>確認進場點：<span class="blue">{{ r.confirm_price }}</span></div>
-        <div>初始停損點：<span class="bad">{{ r.initial_stop }}</span></div>
-        <div>目前估算移動停利：<span class="good">{{ r.trailing_stop }}</span></div>
-        <div>目標價：<span class="good">{{ r.target_price }}</span></div>
-        <div>
-            進場是否觸發：
-            {% if r.entry_triggered %}
-            <span class="good">已觸發</span>
-            {% else %}
-            <span class="warning">尚未觸發</span>
-            {% endif %}
-        </div>
-        <div class="small-text">{{ r.trade_plan_note }}</div>
-
-        <hr>
-
-        <div class="small-text">主力資金</div>
-        <div>資金放大倍率：<span class="purple">{{ r.money_ratio }}</span> 倍</div>
-        <div>近10日疑似主力承接：<span class="good">{{ r.main_buy_days }}</span> 天</div>
-        <div>近10日強勢買盤：<span class="good">{{ r.strong_buy_days }}</span> 天</div>
-
-        <div class="mt-2">
-            {% for s in r.main_signals %}
-                <span class="badge badge-main">{{ s }}</span>
-            {% endfor %}
+        <div class="strategy-box">
+            <strong>策略說明：</strong><br />
+            1. 先找 20 日或 60 日前高突破。<br />
+            2. 突破後不直接追價，等待是否回採前高支撐。<br />
+            3. 回採不破，再搭配 K棒、量能、雞蛋位階與波段位置確認。<br />
+            4. 系統自動排除 B級以下、RSI過熱、乖離過大、短線漲幅過猛、爆量長上影股票。
         </div>
 
-        <hr>
-
-        <div class="small-text">族群強度</div>
-        <div>族群：<span class="warning">{{ r.sector }}</span></div>
-        <div>族群5日均漲幅：{{ r.sector_avg_5d }}%</div>
-        <div>族群20日均漲幅：{{ r.sector_avg_20d }}%</div>
-        <div>族群強勢比例：{{ r.sector_strong_ratio }}%</div>
-        <span class="badge badge-sector">族群強度 {{ r.sector_score }}</span>
-
-        <hr>
-
-        <div class="small-text">技術訊號</div>
-        <div>
-            {% for s in r.signals %}
-                <span class="badge badge-tech">{{ s }}</span>
-            {% endfor %}
+        <div class="section">
+            <div class="section-title">
+                <h2>S級前10｜最接近實戰進場條件</h2>
+                <div class="hint">條件：突破後回採、位階健康、K棒確認、波段位置佳、未過熱</div>
+            </div>
+            <div id="sList"></div>
         </div>
 
-        {% if r.warnings %}
-        <div class="mt-2">
-            {% for w in r.warnings %}
-                <span class="badge badge-warn">{{ w }}</span>
-            {% endfor %}
+        <div class="section">
+            <div class="section-title">
+                <h2>A級前10｜可追蹤觀察</h2>
+                <div class="hint">條件：結構轉強，但可能仍在等回採或確認度略低</div>
+            </div>
+            <div id="aList"></div>
         </div>
-        {% endif %}
 
-        <hr>
+        <div class="section">
+            <div class="section-title">
+                <h2>觀察名單｜等回採 / 可觀察進場</h2>
+                <div class="hint">突破後不急追，等待支撐、K棒、量能再次確認</div>
+            </div>
+            <div id="watchList"></div>
 
-        <div class="small-text">突破回採策略本體回測</div>
-        <div>回測次數：{{ r.bt_count }}</div>
-        <div>勝率：{{ r.bt_winrate }}%</div>
-        <div>平均報酬：{{ r.bt_avg_return }}%</div>
-        <div>平均獲利：{{ r.bt_avg_win }}%</div>
-        <div>平均虧損：{{ r.bt_avg_loss }}%</div>
-        <div>期望值：{{ r.bt_expectancy }}%</div>
-        <div>獲利因子：{{ r.bt_profit_factor }}</div>
-        <div>最大回撤：{{ r.bt_max_drawdown }}%</div>
-        <div class="small-text">{{ r.bt_note }}</div>
-
-        <hr>
-
-        <div class="small-text">市場調整後建議部位</div>
-        <div>原始單筆風險金額：{{ r.risk_amount }} 元</div>
-        <div>市場調整後風險：{{ r.adjusted_risk_amount }} 元</div>
-        <div>市場風險倍率：{{ r.risk_multiplier }}</div>
-        <div>調整後風險百分比：{{ r.adjusted_risk_pct }}%</div>
-        <div>每股風險：{{ r.risk_per_share }} 元</div>
-        <div>建議股數：{{ r.suggest_shares }} 股</div>
-        <div>約當張數：<span class="warning">{{ r.suggest_lots }}</span> 張</div>
-        <div>約當部位：{{ r.position_value }} 元</div>
-        <div class="small-text">{{ r.position_note }}</div>
-
-        <a href="/track/{{ r.symbol }}/{{ r.name }}/{{ r.price }}/{{ r.initial_stop }}/{{ r.take_profit_1 }}/{{ r.take_profit_2 }}"
-           class="btn btn-warning mt-3">
-            加入追蹤
-        </a>
+            <div class="footer-note">
+                操作邏輯：突破只是提醒，不是買點。真正比較好的位置通常是突破後回採前高附近，沒有跌破支撐，再搭配 K棒與量能確認。
+            </div>
+        </div>
 
     </div>
-</div>
-{% endfor %}
-</div>
-{% else %}
-<div class="alert alert-secondary">
-{{ empty_text }}
-</div>
-{% endif %}
-{% endmacro %}
 
-{{ stock_cards(elite_results, "🎯 今日精選｜最多 3 檔", "elite-title", "elite-card", "目前沒有今日精選股票。", True) }}
+    <script>
+        function nowText() {
+            const now = new Date();
 
-<hr>
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, "0");
+            const d = String(now.getDate()).padStart(2, "0");
+            const h = String(now.getHours()).padStart(2, "0");
+            const min = String(now.getMinutes()).padStart(2, "0");
+            const s = String(now.getSeconds()).padStart(2, "0");
 
-{{ stock_cards(s_results, "🏆 S級｜優先觀察", "level-s", "level-card-s", "目前沒有 S 級股票。") }}
+            return `${y}-${m}-${d} ${h}:${min}:${s}`;
+        }
 
-<hr>
+        function updateClock() {
+            document.getElementById("currentTime").textContent = nowText();
+        }
 
-{{ stock_cards(a_results, "🔷 A級｜等待突破或拉回", "level-a", "level-card-a", "目前沒有 A 級股票。") }}
+        setInterval(updateClock, 1000);
+        updateClock();
 
-<hr>
+        function escapeHtml(value) {
+            if (value === null || value === undefined) {
+                return "";
+            }
 
-<div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版本新增法人買超強度、投信買超強度、外資買超強度、流動性過濾與策略統計儀表板。
-</div>
+            return String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
 
-</div>
+        function formatPercent(value) {
+            if (value === null || value === undefined || value === "") {
+                return "--";
+            }
 
+            return `${value}%`;
+        }
+
+        function actionClass(action) {
+            if (!action) {
+                return "";
+            }
+
+            if (action.includes("可觀察進場")) {
+                return "action-buy";
+            }
+
+            if (action.includes("等回採")) {
+                return "action-wait";
+            }
+
+            return "";
+        }
+
+        function renderTable(items) {
+            if (!items || items.length === 0) {
+                return `
+                    <div class="empty">
+                        目前沒有符合條件的股票。<br>
+                        這不代表沒有機會，而是代表策略沒有硬選，避免追高或選到 B 級雜訊股。
+                    </div>
+                `;
+            }
+
+            const rows = items.map(x => {
+                const gradeClass = x.grade === "S" ? "grade-s" : "grade-a";
+                const actionStyle = actionClass(x.action);
+
+                return `
+                    <tr>
+                        <td>
+                            <div class="stock-code">${escapeHtml(x.code)}</div>
+                            <div class="stock-name">${escapeHtml(x.name)}</div>
+                        </td>
+
+                        <td>
+                            <span class="${gradeClass}">
+                                ${escapeHtml(x.grade)}
+                            </span>
+                        </td>
+
+                        <td>${escapeHtml(x.score)}</td>
+                        <td>${escapeHtml(x.price)}</td>
+
+                        <td class="${actionStyle}">
+                            ${escapeHtml(x.action)}
+                        </td>
+
+                        <td>
+                            ${escapeHtml(x.breakout_type)}<br>
+                            <small>${escapeHtml(x.breakout_date)}</small>
+                        </td>
+
+                        <td>${escapeHtml(x.support)}</td>
+                        <td>${formatPercent(escapeHtml(x.distance_to_support))}</td>
+
+                        <td>
+                            ${escapeHtml(x.egg_label)}<br>
+                            <small>${formatPercent(escapeHtml(x.egg_position))}</small>
+                        </td>
+
+                        <td>${escapeHtml(x.candle_label)}</td>
+                        <td>${escapeHtml(x.wave_label)}</td>
+                        <td>${escapeHtml(x.strength_label)}</td>
+                        <td>${escapeHtml(x.risk_notes)}</td>
+                    </tr>
+                `;
+            }).join("");
+
+            return `
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>股票</th>
+                                <th>級別</th>
+                                <th>分數</th>
+                                <th>現價</th>
+                                <th>操作狀態</th>
+                                <th>突破型態</th>
+                                <th>支撐</th>
+                                <th>距支撐</th>
+                                <th>雞蛋位階</th>
+                                <th>K棒確認</th>
+                                <th>波段位置</th>
+                                <th>強度</th>
+                                <th>風險備註</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            ${rows}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        async function loadData(force = false) {
+            const message = document.getElementById("message");
+
+            message.className = "loading";
+            message.style.display = "block";
+            message.textContent = force
+                ? "正在重新掃描全市場，請稍候……"
+                : "正在讀取選股資料，請稍候……";
+
+            try {
+                const url = force
+                    ? "/api/recommendations?force=true"
+                    : "/api/recommendations";
+
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(text || "API 回應失敗");
+                }
+
+                const data = await response.json();
+
+                document.getElementById("updatedAt").textContent = data.updated_at || "--";
+                document.getElementById("rawCount").textContent = data.raw_count ?? "--";
+                document.getElementById("resultCount").textContent = data.result_count ?? "--";
+                document.getElementById("scanSeconds").textContent = data.scan_seconds
+                    ? `${data.scan_seconds} 秒`
+                    : "--";
+
+                document.getElementById("sList").innerHTML = renderTable(data.s_list || []);
+                document.getElementById("aList").innerHTML = renderTable(data.a_list || []);
+                document.getElementById("watchList").innerHTML = renderTable(data.watch_list || []);
+
+                message.style.display = "none";
+
+            } catch (error) {
+                message.className = "error";
+                message.textContent =
+                    "資料讀取失敗。\n\n" +
+                    "可能原因：\n" +
+                    "1. main.py 沒有正常提供 /api/recommendations\n" +
+                    "2. Railway 還在部署\n" +
+                    "3. Yahoo 或交易所資料暫時抓不到\n" +
+                    "4. requirements.txt 少了 jinja2\n" +
+                    "5. Python 程式碼縮排或貼上時有遺漏\n\n" +
+                    "錯誤內容：\n" +
+                    error.message;
+            }
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        const force = params.get("force") === "true";
+
+        loadData(force);
+    </script>
 </body>
 </html>
