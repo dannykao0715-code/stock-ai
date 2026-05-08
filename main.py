@@ -1,18 +1,23 @@
 # main.py
 # -*- coding: utf-8 -*-
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
-import statistics
-import math
 import time
 import traceback
 
-app = FastAPI(title="AI Stock Selection System", version="final-strategy-2026")
+
+app = FastAPI(
+    title="AI Stock Selection System",
+    version="final-template-strategy-2026"
+)
+
+templates = Jinja2Templates(directory="templates")
 
 TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 
@@ -29,7 +34,7 @@ REQUEST_TIMEOUT = 8
 
 
 # =========================================================
-# 1. 股票池：優先抓全市場，失敗則用備援池
+# 1. 備援股票池
 # =========================================================
 
 FALLBACK_STOCKS = [
@@ -58,7 +63,6 @@ FALLBACK_STOCKS = [
     ("3324", "雙鴻", "TWO"),
     ("3653", "健策", "TW"),
     ("2356", "英業達", "TW"),
-    ("Inventec", "英業達", "TW"),
     ("4938", "和碩", "TW"),
     ("2383", "台光電", "TW"),
     ("2368", "金像電", "TW"),
@@ -98,18 +102,22 @@ FALLBACK_STOCKS = [
 ]
 
 
+# =========================================================
+# 2. 股票池
+# =========================================================
+
 def fetch_twse_listed_stocks():
     """
     抓上市股票清單。
-    TWSE OpenAPI 欄位可能偶爾調整，因此用多欄位容錯。
+    失敗時不讓系統掛掉，直接回傳空陣列。
     """
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     stocks = []
 
     try:
-        r = requests.get(url, timeout=REQUEST_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
 
         for item in data:
             code = str(
@@ -138,7 +146,7 @@ def fetch_twse_listed_stocks():
 def fetch_tpex_stocks():
     """
     抓上櫃股票清單。
-    TPEx API 欄位可能調整，因此用容錯。
+    API 若失敗，直接回傳空陣列。
     """
     urls = [
         "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
@@ -149,9 +157,9 @@ def fetch_tpex_stocks():
 
     for url in urls:
         try:
-            r = requests.get(url, timeout=REQUEST_TIMEOUT)
-            r.raise_for_status()
-            data = r.json()
+            response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
 
             for item in data:
                 code = str(
@@ -180,6 +188,10 @@ def fetch_tpex_stocks():
 
 
 def get_stock_pool():
+    """
+    優先抓全市場。
+    若全市場資料失敗，使用備援股票池，避免網站整個不能用。
+    """
     twse = fetch_twse_listed_stocks()
     tpex = fetch_tpex_stocks()
 
@@ -192,24 +204,26 @@ def get_stock_pool():
             seen.add(key)
             pool.append((code, name, market))
 
-    # 如果全市場 API 失敗，至少用備援池讓網站不會掛掉
     if len(pool) < 100:
-        clean = []
+        fallback = []
         seen = set()
+
         for code, name, market in FALLBACK_STOCKS:
             if not str(code).isdigit():
                 continue
+
             key = (code, market)
             if key not in seen:
                 seen.add(key)
-                clean.append((code, name, market))
-        return clean
+                fallback.append((code, name, market))
+
+        return fallback
 
     return pool
 
 
 # =========================================================
-# 2. K線資料
+# 3. K 線資料
 # =========================================================
 
 def yahoo_symbol(code, market):
@@ -220,7 +234,7 @@ def yahoo_symbol(code, market):
 
 def fetch_candles_from_yahoo(code, market, days=420):
     """
-    從 Yahoo Chart API 抓日K。
+    從 Yahoo Finance 抓日 K。
     """
     symbol = yahoo_symbol(code, market)
     now = int(time.time())
@@ -231,9 +245,9 @@ def fetch_candles_from_yahoo(code, market, days=420):
         f"?period1={past}&period2={now}&interval=1d&events=history&includeAdjustedClose=true"
     )
 
-    r = requests.get(url, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    data = r.json()
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    data = response.json()
 
     result = data.get("chart", {}).get("result", [])
     if not result:
@@ -253,23 +267,24 @@ def fetch_candles_from_yahoo(code, market, days=420):
 
     for i, ts in enumerate(timestamps):
         try:
-            o = opens[i]
-            h = highs[i]
-            l = lows[i]
-            c = closes[i]
-            v = volumes[i]
+            open_price = opens[i]
+            high_price = highs[i]
+            low_price = lows[i]
+            close_price = closes[i]
+            volume = volumes[i]
 
-            if o is None or h is None or l is None or c is None:
+            if open_price is None or high_price is None or low_price is None or close_price is None:
                 continue
 
             candles.append({
                 "date": datetime.fromtimestamp(ts, TAIWAN_TZ).strftime("%Y-%m-%d"),
-                "open": float(o),
-                "high": float(h),
-                "low": float(l),
-                "close": float(c),
-                "volume": int(v or 0),
+                "open": float(open_price),
+                "high": float(high_price),
+                "low": float(low_price),
+                "close": float(close_price),
+                "volume": int(volume or 0),
             })
+
         except Exception:
             continue
 
@@ -277,26 +292,13 @@ def fetch_candles_from_yahoo(code, market, days=420):
 
 
 # =========================================================
-# 3. 技術指標
+# 4. 技術指標
 # =========================================================
 
 def sma(values, period):
     if len(values) < period:
         return None
     return sum(values[-period:]) / period
-
-
-def ema(values, period):
-    if len(values) < period:
-        return None
-
-    k = 2 / (period + 1)
-    e = sum(values[:period]) / period
-
-    for price in values[period:]:
-        e = price * k + e * (1 - k)
-
-    return e
 
 
 def rsi(values, period=14):
@@ -308,6 +310,7 @@ def rsi(values, period=14):
 
     for i in range(-period, 0):
         diff = values[i] - values[i - 1]
+
         if diff >= 0:
             gains.append(diff)
             losses.append(0)
@@ -325,43 +328,30 @@ def rsi(values, period=14):
     return 100 - (100 / (1 + rs))
 
 
-def pct(a, b):
-    if b == 0 or b is None:
+def pct(current, base):
+    if base is None or base == 0:
         return 0
-    return (a - b) / b * 100
+    return (current - base) / base * 100
 
 
-def safe_round(x, digits=2):
-    if x is None:
+def safe_round(value, digits=2):
+    if value is None:
         return None
+
     try:
-        return round(float(x), digits)
+        return round(float(value), digits)
     except Exception:
         return None
 
 
-def highest(candles, field, start, end):
-    segment = candles[start:end]
-    if not segment:
-        return None
-    return max(x[field] for x in segment)
-
-
-def lowest(candles, field, start, end):
-    segment = candles[start:end]
-    if not segment:
-        return None
-    return min(x[field] for x in segment)
-
-
 # =========================================================
-# 4. 策略核心：突破不追高 + 回採 + 雞蛋位階 + K棒確認
+# 5. 策略：突破不追高
 # =========================================================
 
 def find_breakout(candles):
     """
-    找最近是否突破 20 / 60 日前高。
-    重點：不是一突破就追，而是先標示突破位階，再看是否回採。
+    找最近是否突破 20 日或 60 日前高。
+    注意：突破不是直接買，而是標示後等待回採。
     """
     if len(candles) < 90:
         return None
@@ -375,7 +365,6 @@ def find_breakout(candles):
     for i in range(search_start, len(candles)):
         prev20_high = max(highs[i - 20:i])
         prev60_high = max(highs[i - 60:i])
-
         close = closes[i]
 
         if close > prev60_high:
@@ -386,6 +375,7 @@ def find_breakout(candles):
                 "level": prev60_high,
                 "strength": 60,
             })
+
         elif close > prev20_high:
             breakout_events.append({
                 "index": i,
@@ -403,13 +393,10 @@ def find_breakout(candles):
 
 def evaluate_pullback(candles, breakout):
     """
-    突破後不追高，重點看：
-    1. 是否回採前高支撐
-    2. 是否跌破
-    3. 是否有K棒確認
+    突破後評估是否回採前高支撐。
     """
     last = candles[-1]
-    current = last["close"]
+    current_price = last["close"]
     support = breakout["level"]
     breakout_index = breakout["index"]
 
@@ -419,7 +406,7 @@ def evaluate_pullback(candles, breakout):
 
     lowest_after = min(x["low"] for x in after_breakout)
 
-    distance_to_support = pct(current, support)
+    distance_to_support = pct(current_price, support)
     low_break_pct = pct(lowest_after, support)
 
     near_support = -2.5 <= distance_to_support <= 6.0
@@ -429,12 +416,15 @@ def evaluate_pullback(candles, breakout):
     if too_far:
         status = "等回採"
         score = 8
+
     elif near_support and not_broken:
         status = "可觀察進場"
         score = 22
+
     elif not_broken:
         status = "回採未破"
         score = 16
+
     else:
         status = "跌破支撐排除"
         score = -30
@@ -452,37 +442,51 @@ def evaluate_pullback(candles, breakout):
     }
 
 
+# =========================================================
+# 6. 雞蛋位階
+# =========================================================
+
 def evaluate_egg_position(candles):
     """
     雞蛋位階：
-    不是越高越好。
-    太低可能弱，太高容易追高。
-    最佳位置：底部轉強後的中低位階至中段。
+    偏好低檔轉強、中段健康，不追高位階。
     """
     if len(candles) < 120:
-        return {"score": 0, "position": None, "label": "資料不足"}
+        return {
+            "score": 0,
+            "position": None,
+            "label": "資料不足"
+        }
 
     close = candles[-1]["close"]
     low120 = min(x["low"] for x in candles[-120:])
     high120 = max(x["high"] for x in candles[-120:])
 
     if high120 == low120:
-        return {"score": 0, "position": None, "label": "區間不足"}
+        return {
+            "score": 0,
+            "position": None,
+            "label": "區間不足"
+        }
 
     position = (close - low120) / (high120 - low120)
 
     if 0.25 <= position <= 0.55:
         score = 18
         label = "雞蛋甜蜜位階"
+
     elif 0.55 < position <= 0.72:
         score = 12
         label = "中段偏強"
+
     elif 0.12 <= position < 0.25:
         score = 8
         label = "低檔剛轉強"
+
     elif position > 0.82:
         score = -22
         label = "高位階風險"
+
     else:
         score = -8
         label = "位階不佳"
@@ -494,38 +498,42 @@ def evaluate_egg_position(candles):
     }
 
 
+# =========================================================
+# 7. K 棒確認
+# =========================================================
+
 def evaluate_candle_confirmation(candles):
     """
-    K棒確認：
-    以實戰簡化條件判斷：
-    - 紅K
-    - 收盤接近高點
-    - 下影線支撐
-    - 量能溫和放大
+    K 棒確認：
+    紅 K、收近高點、下影線支撐、量能溫和放大。
     """
     if len(candles) < 25:
-        return {"score": 0, "label": "資料不足"}
+        return {
+            "score": 0,
+            "label": "資料不足"
+        }
 
     last = candles[-1]
-    prev = candles[-2]
 
-    o = last["open"]
-    h = last["high"]
-    l = last["low"]
-    c = last["close"]
+    open_price = last["open"]
+    high_price = last["high"]
+    low_price = last["low"]
+    close_price = last["close"]
 
-    body = abs(c - o)
-    full = max(h - l, 0.0001)
-    upper_shadow = h - max(c, o)
-    lower_shadow = min(c, o) - l
+    body = abs(close_price - open_price)
+    full_range = max(high_price - low_price, 0.0001)
 
-    close_position = (c - l) / full
-    red_k = c > o
+    upper_shadow = high_price - max(close_price, open_price)
+    lower_shadow = min(close_price, open_price) - low_price
+
+    close_position = (close_price - low_price) / full_range
+
+    red_k = close_price > open_price
     close_near_high = close_position >= 0.65
     lower_support = lower_shadow > upper_shadow and lower_shadow >= body * 0.45
 
-    vols = [x["volume"] for x in candles]
-    avg_vol20 = sum(vols[-21:-1]) / 20 if len(vols) >= 21 else 0
+    volumes = [x["volume"] for x in candles]
+    avg_vol20 = sum(volumes[-21:-1]) / 20 if len(volumes) >= 21 else 0
     vol_ratio = last["volume"] / avg_vol20 if avg_vol20 > 0 else 1
 
     score = 0
@@ -534,15 +542,19 @@ def evaluate_candle_confirmation(candles):
     if red_k:
         score += 7
         labels.append("紅K")
+
     if close_near_high:
         score += 6
         labels.append("收近高點")
+
     if lower_support:
         score += 5
         labels.append("下影線支撐")
+
     if 1.05 <= vol_ratio <= 2.5:
         score += 6
         labels.append("溫和放量")
+
     elif vol_ratio > 3.5:
         score -= 8
         labels.append("爆量風險")
@@ -557,16 +569,21 @@ def evaluate_candle_confirmation(candles):
     }
 
 
+# =========================================================
+# 8. 波段位置
+# =========================================================
+
 def evaluate_wave_position(candles):
     """
     波段位置：
-    避免買在波段末端，偏好：
-    - MA20 > MA60
-    - 價格站上MA20
-    - 但不要離MA20太遠
+    避免買在波段末端。
+    偏好 MA20 > MA60、股價站上 MA20，但不要離 MA20 太遠。
     """
     if len(candles) < 80:
-        return {"score": 0, "label": "資料不足"}
+        return {
+            "score": 0,
+            "label": "資料不足"
+        }
 
     closes = [x["close"] for x in candles]
     close = closes[-1]
@@ -576,7 +593,10 @@ def evaluate_wave_position(candles):
     ma60 = sma(closes, 60)
 
     if not ma20 or not ma60:
-        return {"score": 0, "label": "均線不足"}
+        return {
+            "score": 0,
+            "label": "均線不足"
+        }
 
     dist_ma20 = pct(close, ma20)
 
@@ -604,6 +624,7 @@ def evaluate_wave_position(candles):
     if dist_ma20 > 15:
         score -= 18
         labels.append("離月線過遠")
+
     elif 0 <= dist_ma20 <= 8:
         score += 8
         labels.append("波段位置健康")
@@ -618,27 +639,31 @@ def evaluate_wave_position(candles):
     }
 
 
+# =========================================================
+# 9. 強度評分
+# =========================================================
+
 def evaluate_market_strength(candles):
     """
-    個股趨勢強度，近似代表資金是否願意推。
+    近似評估個股資金推動力。
     """
     if len(candles) < 65:
-        return {"score": 0, "label": "資料不足"}
+        return {
+            "score": 0,
+            "label": "資料不足"
+        }
 
     closes = [x["close"] for x in candles]
-    vols = [x["volume"] for x in candles]
+    volumes = [x["volume"] for x in candles]
 
     close = closes[-1]
-    close5 = closes[-6]
-    close20 = closes[-21]
-    close60 = closes[-61]
 
-    ret5 = pct(close, close5)
-    ret20 = pct(close, close20)
-    ret60 = pct(close, close60)
+    ret5 = pct(close, closes[-6])
+    ret20 = pct(close, closes[-21])
+    ret60 = pct(close, closes[-61])
 
-    avg_vol5 = sum(vols[-5:]) / 5
-    avg_vol20 = sum(vols[-25:-5]) / 20 if len(vols) >= 25 else avg_vol5
+    avg_vol5 = sum(volumes[-5:]) / 5
+    avg_vol20 = sum(volumes[-25:-5]) / 20 if len(volumes) >= 25 else avg_vol5
     vol_trend = avg_vol5 / avg_vol20 if avg_vol20 > 0 else 1
 
     score = 0
@@ -647,12 +672,15 @@ def evaluate_market_strength(candles):
     if ret20 > 5:
         score += 8
         labels.append("20日轉強")
+
     if ret60 > 8:
         score += 8
         labels.append("60日多方")
+
     if 1.0 <= vol_trend <= 2.4:
         score += 8
         labels.append("量能健康")
+
     elif vol_trend > 3.2:
         score -= 10
         labels.append("量能過熱")
@@ -671,16 +699,23 @@ def evaluate_market_strength(candles):
     }
 
 
+# =========================================================
+# 10. 過熱排除
+# =========================================================
+
 def evaluate_overheat(candles):
     """
     過熱排除條件：
-    符合任一過熱特徵，直接不列入 S/A。
+    只要符合任一高風險過熱條件，就不列入結果。
     """
     if len(candles) < 65:
-        return {"overheated": False, "reasons": []}
+        return {
+            "overheated": False,
+            "reasons": []
+        }
 
     closes = [x["close"] for x in candles]
-    vols = [x["volume"] for x in candles]
+    volumes = [x["volume"] for x in candles]
 
     close = closes[-1]
     ma20 = sma(closes, 20)
@@ -688,27 +723,30 @@ def evaluate_overheat(candles):
 
     ret5 = pct(close, closes[-6])
     ret20 = pct(close, closes[-21])
-
-    avg_vol20 = sum(vols[-21:-1]) / 20 if len(vols) >= 21 else 0
-    vol_ratio = vols[-1] / avg_vol20 if avg_vol20 > 0 else 1
-
     dist_ma20 = pct(close, ma20) if ma20 else 0
 
+    avg_vol20 = sum(volumes[-21:-1]) / 20 if len(volumes) >= 21 else 0
+    vol_ratio = volumes[-1] / avg_vol20 if avg_vol20 > 0 else 1
+
     last = candles[-1]
-    full = max(last["high"] - last["low"], 0.0001)
+    full_range = max(last["high"] - last["low"], 0.0001)
     upper_shadow = last["high"] - max(last["open"], last["close"])
-    upper_ratio = upper_shadow / full
+    upper_ratio = upper_shadow / full_range
 
     reasons = []
 
     if ret5 >= 18:
         reasons.append("5日漲幅過大")
+
     if ret20 >= 35:
         reasons.append("20日漲幅過大")
+
     if dist_ma20 >= 18:
         reasons.append("乖離月線過大")
+
     if rsi14 and rsi14 >= 78:
         reasons.append("RSI過熱")
+
     if vol_ratio >= 4.0 and upper_ratio >= 0.35:
         reasons.append("爆量長上影")
 
@@ -724,7 +762,7 @@ def evaluate_overheat(candles):
 
 
 # =========================================================
-# 5. 單檔股票分析
+# 11. 單檔股票分析
 # =========================================================
 
 def analyze_stock(code, name, market):
@@ -735,7 +773,6 @@ def analyze_stock(code, name, market):
             return None
 
         last = candles[-1]
-        closes = [x["close"] for x in candles]
 
         overheat = evaluate_overheat(candles)
         if overheat["overheated"]:
@@ -768,7 +805,6 @@ def analyze_stock(code, name, market):
             + strength["score"]
         )
 
-        # 風險控制：雖然沒達過熱排除，但如果位置太差也扣掉
         risk_notes = []
 
         if egg["score"] < 0:
@@ -778,27 +814,29 @@ def analyze_stock(code, name, market):
             risk_notes.append("短線偏離月線")
 
         if pullback["status"] == "等回採":
-            # 等回採股不給 S，避免使用者誤會是立即進場
             total_score = min(total_score, 76)
 
         if total_score >= 82 and pullback["status"] != "等回採":
             grade = "S"
+
         elif total_score >= 68:
             grade = "A"
+
         else:
-            # B級以下完全排除
             return None
 
-        # 最終防線：只留 S/A，不輸出 B、不輸出過熱
         if grade not in ["S", "A"]:
             return None
 
         if pullback["status"] == "等回採":
             action = "等回採，不追高"
+
         elif pullback["status"] == "可觀察進場":
             action = "可觀察進場"
+
         elif pullback["status"] == "回採未破":
             action = "觀察回採支撐"
+
         else:
             action = "觀察"
 
@@ -832,7 +870,7 @@ def analyze_stock(code, name, market):
 
 
 # =========================================================
-# 6. 全市場掃描與快取
+# 12. 全市場掃描與快取
 # =========================================================
 
 def scan_market(force=False):
@@ -840,6 +878,7 @@ def scan_market(force=False):
 
     if not force and CACHE["data"] is not None and CACHE["updated_at"] is not None:
         age = (now - CACHE["updated_at"]).total_seconds()
+
         if age < CACHE_TTL_SECONDS:
             return CACHE["data"]
 
@@ -857,12 +896,13 @@ def scan_market(force=False):
         for future in as_completed(futures):
             try:
                 item = future.result()
+
                 if item:
                     results.append(item)
+
             except Exception:
                 continue
 
-    # 排序邏輯：分數優先，其次靠近支撐者優先
     results.sort(
         key=lambda x: (
             x["score"],
@@ -904,442 +944,32 @@ def scan_market(force=False):
 
 
 # =========================================================
-# 7. HTML UI
+# 13. Routes
 # =========================================================
 
-def render_table(items):
-    if not items:
-        return """
-        <div class="empty">
-            目前沒有符合條件的股票。<br>
-            這不代表沒有機會，而是代表策略沒有硬選，避免追高或選到 B 級雜訊股。
-        </div>
-        """
-
-    rows = ""
-
-    for x in items:
-        grade_class = "grade-s" if x["grade"] == "S" else "grade-a"
-
-        rows += f"""
-        <tr>
-            <td>
-                <div class="stock-code">{x['code']}</div>
-                <div class="stock-name">{x['name']}</div>
-            </td>
-            <td><span class="{grade_class}">{x['grade']}</span></td>
-            <td>{x['score']}</td>
-            <td>{x['price']}</td>
-            <td>{x['action']}</td>
-            <td>{x['breakout_type']}<br><small>{x['breakout_date']}</small></td>
-            <td>{x['support']}</td>
-            <td>{x['distance_to_support']}%</td>
-            <td>{x['egg_label']}<br><small>{x['egg_position']}%</small></td>
-            <td>{x['candle_label']}</td>
-            <td>{x['wave_label']}</td>
-            <td>{x['risk_notes']}</td>
-        </tr>
-        """
-
-    return f"""
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>股票</th>
-                    <th>級別</th>
-                    <th>分數</th>
-                    <th>現價</th>
-                    <th>操作狀態</th>
-                    <th>突破型態</th>
-                    <th>支撐</th>
-                    <th>距支撐</th>
-                    <th>雞蛋位階</th>
-                    <th>K棒確認</th>
-                    <th>波段位置</th>
-                    <th>風險備註</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows}
-            </tbody>
-        </table>
-    </div>
-    """
+@app.get("/")
+def home(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request
+        }
+    )
 
 
-def html_page(data):
-    now = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-    s_table = render_table(data["s_list"])
-    a_table = render_table(data["a_list"])
-    watch_table = render_table(data["watch_list"])
-
-    return f"""
-    <!DOCTYPE html>
-    <html lang="zh-Hant">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AI 選股系統｜實戰策略版</title>
-        <style>
-            * {{
-                box-sizing: border-box;
-            }}
-
-            body {{
-                margin: 0;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", Arial, sans-serif;
-                background: #0f172a;
-                color: #e5e7eb;
-            }}
-
-            .container {{
-                max-width: 1500px;
-                margin: 0 auto;
-                padding: 22px;
-            }}
-
-            .header {{
-                background: linear-gradient(135deg, #1e293b, #111827);
-                border: 1px solid #334155;
-                border-radius: 22px;
-                padding: 24px;
-                margin-bottom: 20px;
-                box-shadow: 0 12px 30px rgba(0,0,0,0.25);
-            }}
-
-            h1 {{
-                margin: 0 0 10px;
-                font-size: 30px;
-                letter-spacing: 0.5px;
-            }}
-
-            .subtitle {{
-                color: #cbd5e1;
-                line-height: 1.7;
-                font-size: 15px;
-            }}
-
-            .badges {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 10px;
-                margin-top: 18px;
-            }}
-
-            .badge {{
-                padding: 8px 12px;
-                border-radius: 999px;
-                background: #1e293b;
-                border: 1px solid #475569;
-                color: #dbeafe;
-                font-size: 13px;
-            }}
-
-            .stats {{
-                display: grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 14px;
-                margin-bottom: 20px;
-            }}
-
-            .stat {{
-                background: #111827;
-                border: 1px solid #334155;
-                border-radius: 18px;
-                padding: 18px;
-            }}
-
-            .stat-title {{
-                color: #94a3b8;
-                font-size: 13px;
-                margin-bottom: 8px;
-            }}
-
-            .stat-value {{
-                font-size: 24px;
-                font-weight: 800;
-            }}
-
-            .section {{
-                background: #111827;
-                border: 1px solid #334155;
-                border-radius: 22px;
-                padding: 20px;
-                margin-bottom: 22px;
-                box-shadow: 0 10px 24px rgba(0,0,0,0.22);
-            }}
-
-            .section-title {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 14px;
-                gap: 10px;
-            }}
-
-            h2 {{
-                margin: 0;
-                font-size: 22px;
-            }}
-
-            .hint {{
-                color: #94a3b8;
-                font-size: 13px;
-            }}
-
-            .table-wrap {{
-                overflow-x: auto;
-                border-radius: 16px;
-                border: 1px solid #334155;
-            }}
-
-            table {{
-                width: 100%;
-                min-width: 1200px;
-                border-collapse: collapse;
-                background: #020617;
-            }}
-
-            th {{
-                background: #1e293b;
-                color: #cbd5e1;
-                text-align: left;
-                padding: 12px;
-                font-size: 13px;
-                white-space: nowrap;
-                border-bottom: 1px solid #334155;
-            }}
-
-            td {{
-                padding: 12px;
-                border-bottom: 1px solid #1f2937;
-                vertical-align: top;
-                font-size: 14px;
-                line-height: 1.5;
-            }}
-
-            tr:hover {{
-                background: #0f172a;
-            }}
-
-            small {{
-                color: #94a3b8;
-            }}
-
-            .stock-code {{
-                font-size: 16px;
-                font-weight: 800;
-                color: #f8fafc;
-            }}
-
-            .stock-name {{
-                color: #94a3b8;
-                font-size: 13px;
-            }}
-
-            .grade-s {{
-                display: inline-block;
-                padding: 5px 10px;
-                border-radius: 999px;
-                background: #f59e0b;
-                color: #111827;
-                font-weight: 900;
-            }}
-
-            .grade-a {{
-                display: inline-block;
-                padding: 5px 10px;
-                border-radius: 999px;
-                background: #38bdf8;
-                color: #082f49;
-                font-weight: 900;
-            }}
-
-            .empty {{
-                color: #94a3b8;
-                background: #020617;
-                border: 1px dashed #334155;
-                border-radius: 16px;
-                padding: 22px;
-                line-height: 1.7;
-            }}
-
-            .actions {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 10px;
-                margin-top: 18px;
-            }}
-
-            .btn {{
-                display: inline-block;
-                text-decoration: none;
-                padding: 11px 15px;
-                border-radius: 14px;
-                font-weight: 700;
-                font-size: 14px;
-                border: 1px solid #475569;
-                color: #f8fafc;
-                background: #1e293b;
-            }}
-
-            .btn-primary {{
-                background: #2563eb;
-                border-color: #3b82f6;
-            }}
-
-            .warning {{
-                margin-top: 14px;
-                color: #fcd34d;
-                font-size: 13px;
-                line-height: 1.7;
-            }}
-
-            @media (max-width: 900px) {{
-                .container {{
-                    padding: 14px;
-                }}
-
-                h1 {{
-                    font-size: 24px;
-                }}
-
-                .stats {{
-                    grid-template-columns: repeat(2, minmax(0, 1fr));
-                }}
-
-                .section-title {{
-                    align-items: flex-start;
-                    flex-direction: column;
-                }}
-            }}
-        </style>
-    </head>
-
-    <body>
-        <div class="container">
-
-            <div class="header">
-                <h1>AI 選股系統｜實戰策略最終整合版</h1>
-                <div class="subtitle">
-                    核心邏輯：突破不追高、等回採、回採前高不破、雞蛋位階、K棒確認、波段位置。<br>
-                    本版已排除 B級股、過熱股、乖離過大股，避免系統為了硬選而選出雜訊。
-                </div>
-
-                <div class="badges">
-                    <div class="badge">只顯示 S / A</div>
-                    <div class="badge">B級完全排除</div>
-                    <div class="badge">過熱股排除</div>
-                    <div class="badge">突破後不追高</div>
-                    <div class="badge">支撐回採確認</div>
-                    <div class="badge">快取20分鐘</div>
-                </div>
-
-                <div class="actions">
-                    <a class="btn btn-primary" href="/rescan">重新掃描</a>
-                    <a class="btn" href="/">重新整理</a>
-                    <a class="btn" href="/api/recommendations">JSON資料</a>
-                </div>
-
-                <div class="warning">
-                    提醒：這是策略篩選系統，不是保證獲利訊號。實際進場仍需搭配大盤環境、成交量、停損位置與個人資金控管。
-                </div>
-            </div>
-
-            <div class="stats">
-                <div class="stat">
-                    <div class="stat-title">目前時間</div>
-                    <div class="stat-value">{now}</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-title">資料更新</div>
-                    <div class="stat-value">{data["updated_at"]}</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-title">掃描股票數</div>
-                    <div class="stat-value">{data["raw_count"]}</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-title">符合條件數</div>
-                    <div class="stat-value">{data["result_count"]}</div>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title">
-                    <h2>S級前10｜最接近實戰進場條件</h2>
-                    <div class="hint">條件：突破後回採、位階健康、K棒確認、波段位置佳、未過熱</div>
-                </div>
-                {s_table}
-            </div>
-
-            <div class="section">
-                <div class="section-title">
-                    <h2>A級前10｜可追蹤觀察</h2>
-                    <div class="hint">條件：結構轉強，但可能仍在等回採或確認度略低</div>
-                </div>
-                {a_table}
-            </div>
-
-            <div class="section">
-                <div class="section-title">
-                    <h2>觀察名單｜等回採 / 可觀察進場</h2>
-                    <div class="hint">突破後不急追，等待支撐、K棒、量能再次確認</div>
-                </div>
-                {watch_table}
-            </div>
-
-        </div>
-    </body>
-    </html>
-    """
+@app.get("/recommendations")
+def recommendations(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request
+        }
+    )
 
 
-# =========================================================
-# 8. Routes
-# =========================================================
-
-@app.get("/", response_class=HTMLResponse)
-def home():
-    try:
-        data = scan_market(force=False)
-        return HTMLResponse(html_page(data))
-    except Exception as e:
-        err = traceback.format_exc()
-        return HTMLResponse(f"""
-        <html>
-        <body style="font-family:Arial; background:#111827; color:#fff; padding:24px;">
-            <h1>系統發生錯誤</h1>
-            <p>{str(e)}</p>
-            <pre style="white-space:pre-wrap; background:#020617; padding:16px; border-radius:12px;">{err}</pre>
-        </body>
-        </html>
-        """, status_code=500)
-
-
-@app.get("/recommendations", response_class=HTMLResponse)
-def recommendations_page():
-    return home()
-
-
-@app.get("/rescan", response_class=HTMLResponse)
+@app.get("/rescan")
 def rescan():
-    try:
-        data = scan_market(force=True)
-        return HTMLResponse(html_page(data))
-    except Exception as e:
-        err = traceback.format_exc()
-        return HTMLResponse(f"""
-        <html>
-        <body style="font-family:Arial; background:#111827; color:#fff; padding:24px;">
-            <h1>重新掃描失敗</h1>
-            <p>{str(e)}</p>
-            <pre style="white-space:pre-wrap; background:#020617; padding:16px; border-radius:12px;">{err}</pre>
-        </body>
-        </html>
-        """, status_code=500)
+    return RedirectResponse(url="/?force=true")
 
 
 @app.get("/api/recommendations")
@@ -1347,11 +977,15 @@ def api_recommendations(force: bool = Query(False)):
     try:
         data = scan_market(force=force)
         return JSONResponse(data)
+
     except Exception as e:
-        return JSONResponse({
-            "error": str(e),
-            "trace": traceback.format_exc(),
-        }, status_code=500)
+        return JSONResponse(
+            {
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+            status_code=500
+        )
 
 
 @app.get("/health")
@@ -1364,7 +998,15 @@ def health():
     }
 
 
-# Railway / local 啟動用
+# =========================================================
+# 14. Local / Railway 啟動
+# =========================================================
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000
+    )
