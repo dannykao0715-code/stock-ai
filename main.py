@@ -16,9 +16,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-# =====================================================
-# 登入保護
-# =====================================================
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
 
@@ -42,9 +39,6 @@ def protect_site():
         return require_auth()
 
 
-# =====================================================
-# 基本設定
-# =====================================================
 TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 
 RESULT_FILE = "scan_results.json"
@@ -69,12 +63,13 @@ MIN_AVG_AMOUNT_20 = 5_000_000
 MIN_RISK_REWARD_ENTRY = 1.5
 GOOD_RISK_REWARD = 2.0
 
+MIN_FEEDBACK_SAMPLE = 3
+MAX_FEEDBACK_BONUS = 35
+MAX_FEEDBACK_PENALTY = -35
+
 is_scanning = False
 
 
-# =====================================================
-# 工具
-# =====================================================
 def taiwan_now():
     return datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -138,9 +133,6 @@ def days_between(start, end):
         return 0
 
 
-# =====================================================
-# 掃描狀態
-# =====================================================
 def save_scan_status(status, message):
     write_json_file(SCAN_STATUS_FILE, {
         "status": status,
@@ -157,9 +149,17 @@ def load_scan_status():
     })
 
 
-# =====================================================
-# 股票池
-# =====================================================
+def get_risk_reward_group(risk_reward):
+    rr = safe_float(risk_reward)
+    if rr >= 2.5:
+        return "風報比 2.5以上"
+    if rr >= 2.0:
+        return "風報比 2.0~2.5"
+    if rr >= 1.5:
+        return "風報比 1.5~2.0"
+    return "風報比 低於1.5"
+
+
 def get_fallback_stock_pool():
     base = {
         "2330.TW": ("台積電", "半導體"),
@@ -291,6 +291,7 @@ def fetch_tpex_openapi_stock_pool():
             data = fetch_json_url(url)
             rows = data.get("data", []) if isinstance(data, dict) else data if isinstance(data, list) else []
             temp = {}
+
             for item in rows:
                 if not isinstance(item, dict):
                     continue
@@ -336,7 +337,6 @@ def fetch_isin_by_mode(mode, suffix, industry_label):
                     market[symbol] = info
             except Exception:
                 continue
-
     except Exception as e:
         print(f"ISIN mode={mode} 失敗：", e)
 
@@ -425,9 +425,6 @@ def get_stock_pool():
     return fallback
 
 
-# =====================================================
-# 股價資料
-# =====================================================
 def download_stock(symbol, period="1y"):
     try:
         df = yf.download(
@@ -446,15 +443,11 @@ def download_stock(symbol, period="1y"):
             df.columns = df.columns.get_level_values(0)
 
         return df.dropna()
-
     except Exception as e:
         print("下載失敗：", symbol, e)
         return None
 
 
-# =====================================================
-# 族群與龍頭設定
-# =====================================================
 SECTOR_LEADERS = {
     "半導體": ["2330.TW", "2303.TW"],
     "IC設計": ["2454.TW", "3034.TW", "2379.TW", "3661.TW", "3443.TW", "5274.TWO"],
@@ -498,9 +491,6 @@ def infer_sector(symbol, name, industry):
     return "其他"
 
 
-# =====================================================
-# 指標計算
-# =====================================================
 def calc_atr(df, period=14):
     high = df["High"]
     low = df["Low"]
@@ -713,9 +703,6 @@ def calc_main_force(df):
     }
 
 
-# =====================================================
-# Top-Down：大盤、壓力區、盤整區
-# =====================================================
 def analyze_index(symbol):
     df = download_stock(symbol, "1y")
 
@@ -756,14 +743,19 @@ def analyze_index(symbol):
     distance_to_high = pct(prev_high_60, price)
 
     score = 0
+
     if above_ma20:
         score += 10
+
     if above_ma60:
         score += 10
+
     if ma20_gt_ma60:
         score += 10
+
     if ma20_gt_ma60 and ma60_gt_ma120:
         score += 15
+
     score += egg["egg_score"]
 
     if distance_to_high <= 3 and price < prev_high_60:
@@ -818,6 +810,7 @@ def get_market_status():
         }
 
     score = twii["score"]
+
     if otc["ok"]:
         score += min(max(otc["score"] * 0.35, -10), 15)
 
@@ -902,6 +895,7 @@ def detect_resistance_zone(df):
         }
 
     recent = df.iloc[-120:-1] if len(df) >= 121 else df.iloc[:-1]
+
     if recent.empty:
         return {
             "resistance_low": 0,
@@ -1050,9 +1044,6 @@ def analyze_breakout_pullback(df, resistance, box):
     }
 
 
-# =====================================================
-# 個股分析
-# =====================================================
 def analyze_stock(df):
     if df is None or len(df) < 120:
         return None
@@ -1186,9 +1177,6 @@ def analyze_stock(df):
     return result
 
 
-# =====================================================
-# 族群強度與龍頭強度
-# =====================================================
 def calc_sector_scores(items):
     sector_map = {}
 
@@ -1248,6 +1236,7 @@ def calc_sector_scores(items):
 
 def calc_leader_strength(sector, analyzed_map):
     leaders = SECTOR_LEADERS.get(sector, [])
+
     if not leaders:
         return {
             "leader_score": 0,
@@ -1261,6 +1250,7 @@ def calc_leader_strength(sector, analyzed_map):
 
     for symbol in leaders:
         item = analyzed_map.get(symbol)
+
         if not item:
             continue
 
@@ -1269,14 +1259,19 @@ def calc_leader_strength(sector, analyzed_map):
 
         if item.get("price", 0) > item.get("ma20", 0):
             score += 10
+
         if item.get("price", 0) > item.get("ma60", 0):
             score += 10
+
         if item.get("ma20", 0) > item.get("ma60", 0):
             score += 10
+
         if item.get("breakout_state") in ["前高區突破回採不破", "突破前高區等回採", "突破盤整等回採"]:
             score += 20
+
         if item.get("main_score", 0) >= 40:
             score += 15
+
         if item.get("change_20d", 0) > 8:
             score += 10
 
@@ -1331,9 +1326,6 @@ def build_sector_rankings(sector_scores, leader_scores):
     return ranked
 
 
-# =====================================================
-# 交易計畫
-# =====================================================
 def determine_entry_status(item):
     warnings = item.get("warnings", [])
     breakout_state = item.get("breakout_state", "")
@@ -1467,17 +1459,6 @@ def build_trade_plan(item):
     }
 
 
-def get_risk_reward_group(risk_reward):
-    rr = safe_float(risk_reward)
-    if rr >= 2.5:
-        return "風報比 2.5以上"
-    if rr >= 2.0:
-        return "風報比 2.0~2.5"
-    if rr >= 1.5:
-        return "風報比 1.5~2.0"
-    return "風報比 低於1.5"
-
-
 def calc_position_sizing(item, market_info):
     entry = item.get("next_entry_low") or item.get("price")
     stop = item.get("practical_stop") or item.get("initial_stop")
@@ -1530,117 +1511,317 @@ def classify_stock(item):
     return None
 
 
-# =====================================================
-# 候選池
-# =====================================================
-def load_candidate_pool():
-    return read_json_file(CANDIDATE_FILE, {
-        "updated_at": "-",
-        "candidates": {},
-        "entry_alerts": []
-    })
+def trade_return_value(log):
+    total = safe_float(log.get("total_pnl"), None)
+
+    if total is not None and total != 0:
+        return total
+
+    pnl_pct = safe_float(log.get("pnl_pct"), 0)
+    entry = safe_float(log.get("entry_price"), 0)
+    shares = safe_int(log.get("shares"), 0)
+
+    if entry and shares:
+        return round2(entry * shares * pnl_pct / 100)
+
+    return pnl_pct
 
 
-def save_candidate_pool(data):
-    write_json_file(CANDIDATE_FILE, data)
+def calc_group_stats(logs, key_name):
+    group_map = {}
+
+    for log in logs:
+        key = log.get(key_name) or "未分類"
+        group_map.setdefault(key, []).append(log)
+
+    rows = []
+
+    for key, arr in group_map.items():
+        returns = [trade_return_value(x) for x in arr]
+        pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in arr]
+
+        wins = [r for r in returns if r > 0]
+        losses = [r for r in returns if r < 0]
+
+        count = len(arr)
+        winrate = round2(len(wins) / count * 100) if count else 0
+        avg_return = round2(sum(pct_returns) / count) if count else 0
+        total_pnl = round2(sum(returns))
+        avg_win = round2(sum(wins) / len(wins)) if wins else 0
+        avg_loss = round2(sum(losses) / len(losses)) if losses else 0
+
+        if avg_loss != 0:
+            payoff_ratio = round2(abs(avg_win / avg_loss))
+        else:
+            payoff_ratio = 0
+
+        expectancy = round2(total_pnl / count) if count else 0
+
+        if count < MIN_FEEDBACK_SAMPLE:
+            ai_comment = "樣本不足，先觀察"
+            ai_level = "neutral"
+        elif winrate >= 60 and total_pnl > 0 and avg_return > 0:
+            ai_comment = "表現良好，可保留或提高權重"
+            ai_level = "good"
+        elif winrate < 40 and total_pnl < 0:
+            ai_comment = "表現偏弱，建議降權或提高門檻"
+            ai_level = "bad"
+        elif total_pnl > 0:
+            ai_comment = "有獲利能力，但仍需觀察穩定性"
+            ai_level = "normal"
+        else:
+            ai_comment = "效果普通，建議保守使用"
+            ai_level = "warning"
+
+        rows.append({
+            "name": key,
+            "count": count,
+            "winrate": winrate,
+            "avg_return": avg_return,
+            "total_pnl": total_pnl,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "payoff_ratio": payoff_ratio,
+            "expectancy": expectancy,
+            "ai_comment": ai_comment,
+            "ai_level": ai_level
+        })
+
+    rows = sorted(rows, key=lambda x: (x["total_pnl"], x["winrate"], x["count"]), reverse=True)
+    return rows
 
 
-def update_candidate_pool(items):
-    old_data = load_candidate_pool()
-    old_candidates = old_data.get("candidates", {})
-
-    now = taiwan_now()
-    today = today_str()
-
-    new_candidates = {}
-    entry_alerts = []
-
-    for item in items:
-        if item.get("level") not in ["S", "A"]:
-            continue
-
-        if item.get("entry_status") in ["跌破取消", "過熱不追", "不列入", "流動性不足"]:
-            continue
-
-        symbol = item["symbol"]
-        old = old_candidates.get(symbol, {})
-
-        previous_status = old.get("current_status", "-")
-        current_status = item.get("entry_status", "-")
-
-        candidate = {
-            "symbol": symbol,
-            "name": item.get("name", symbol),
-            "level": item.get("level", "-"),
-            "sector": item.get("sector", "-"),
-            "previous_status": previous_status,
-            "current_status": current_status,
-            "buy_type": item.get("buy_type", "-"),
-            "score": item.get("score", 0),
-            "support_price": item.get("support_price", 0),
-            "next_entry_low": item.get("next_entry_low", 0),
-            "next_entry_high": item.get("next_entry_high", 0),
-            "no_entry_price": item.get("no_entry_price", 0),
-            "invalid_price": item.get("invalid_price", 0),
-            "practical_stop": item.get("practical_stop", 0),
-            "risk_reward": item.get("risk_reward", 0),
-            "risk_reward_note": item.get("risk_reward_note", "-"),
-            "risk_reward_group": item.get("risk_reward_group", "-"),
-            "target_price": item.get("target_price", 0),
-            "sector_status": item.get("sector_status", "-"),
-            "leader_status": item.get("leader_status", "-"),
-            "leader_names": item.get("leader_names", "-"),
-            "market_status": item.get("market_status", "-"),
-            "resistance_low": item.get("resistance_low", 0),
-            "resistance_high": item.get("resistance_high", 0),
-            "box_low": item.get("box_low", 0),
-            "box_high": item.get("box_high", 0),
-            "breakout_state": item.get("breakout_state", "-"),
-            "egg_zone": item.get("egg_zone", "-"),
-            "candle_signal": item.get("candle_signal", "-"),
-            "ai_next_action": item.get("ai_next_action", "-"),
-            "trade_plan_note": item.get("trade_plan_note", "-"),
-            "updated_at": now,
-            "first_seen": old.get("first_seen", today),
-            "last_seen": today
+def calc_strategy_dashboard(logs):
+    if not logs:
+        return {
+            "total_count": 0,
+            "winrate": 0,
+            "total_pnl": 0,
+            "avg_return": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "payoff_ratio": 0,
+            "best_trade": "-",
+            "worst_trade": "-",
+            "avg_hold_days": 0,
+            "by_buy_type": [],
+            "by_sector": [],
+            "by_level": [],
+            "by_risk_reward": [],
+            "by_market": [],
+            "by_leader": [],
+            "ai_summary": "目前尚無結案交易，先累積樣本。"
         }
 
-        new_candidates[symbol] = candidate
+    returns = [trade_return_value(x) for x in logs]
+    pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in logs]
 
-        if current_status == "可觀察進場" and item.get("risk_reward", 0) >= MIN_RISK_REWARD_ENTRY:
-            entry_alerts.append(dict(candidate))
+    wins = [r for r in returns if r > 0]
+    losses = [r for r in returns if r < 0]
 
-    sorted_candidates = dict(
-        sorted(
-            new_candidates.items(),
-            key=lambda kv: (
-                1 if kv[1].get("current_status") == "可觀察進場" else 0,
-                kv[1].get("risk_reward", 0),
-                kv[1].get("score", 0)
-            ),
-            reverse=True
-        )
-    )
+    count = len(logs)
+    winrate = round2(len(wins) / count * 100)
+    total_pnl = round2(sum(returns))
+    avg_return = round2(sum(pct_returns) / count)
 
-    entry_alerts = sorted(
-        entry_alerts,
-        key=lambda x: (x.get("level") == "S", x.get("risk_reward", 0), x.get("score", 0)),
-        reverse=True
-    )[:MAX_ENTRY_ALERTS]
+    avg_win = round2(sum(wins) / len(wins)) if wins else 0
+    avg_loss = round2(sum(losses) / len(losses)) if losses else 0
 
-    data = {
-        "updated_at": now,
-        "candidates": sorted_candidates,
-        "entry_alerts": entry_alerts
+    if avg_loss != 0:
+        payoff_ratio = round2(abs(avg_win / avg_loss))
+    else:
+        payoff_ratio = 0
+
+    best = max(logs, key=lambda x: trade_return_value(x))
+    worst = min(logs, key=lambda x: trade_return_value(x))
+
+    hold_days = [
+        days_between(x.get("entry_date", ""), x.get("exit_date", ""))
+        for x in logs
+    ]
+
+    avg_hold_days = round2(sum(hold_days) / len(hold_days)) if hold_days else 0
+
+    by_buy_type = calc_group_stats(logs, "buy_type")
+    by_sector = calc_group_stats(logs, "sector")
+    by_level = calc_group_stats(logs, "level")
+    by_risk_reward = calc_group_stats(logs, "risk_reward_group")
+    by_market = calc_group_stats(logs, "market_status")
+    by_leader = calc_group_stats(logs, "leader_status")
+
+    ai_notes = []
+
+    if winrate >= 55 and total_pnl > 0:
+        ai_notes.append("整體策略目前為正向，可持續累積樣本。")
+    elif total_pnl < 0:
+        ai_notes.append("整體績效目前偏弱，建議降低部位並檢查失敗類型。")
+    else:
+        ai_notes.append("整體樣本仍需累積，先不要過度調整策略。")
+
+    if by_buy_type:
+        best_type = by_buy_type[0]
+        ai_notes.append(f"目前表現較佳的買點為「{best_type['name']}」，勝率 {best_type['winrate']}%，總損益 {best_type['total_pnl']}。")
+
+    bad_types = [x for x in by_buy_type if x["count"] >= MIN_FEEDBACK_SAMPLE and x["total_pnl"] < 0 and x["winrate"] < 40]
+
+    if bad_types:
+        ai_notes.append(f"「{bad_types[0]['name']}」表現偏弱，建議降權或提高進場門檻。")
+
+    return {
+        "total_count": count,
+        "winrate": winrate,
+        "total_pnl": total_pnl,
+        "avg_return": avg_return,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "payoff_ratio": payoff_ratio,
+        "best_trade": f"{best.get('name', '-')} / {trade_return_value(best)}",
+        "worst_trade": f"{worst.get('name', '-')} / {trade_return_value(worst)}",
+        "avg_hold_days": avg_hold_days,
+        "by_buy_type": by_buy_type,
+        "by_sector": by_sector,
+        "by_level": by_level,
+        "by_risk_reward": by_risk_reward,
+        "by_market": by_market,
+        "by_leader": by_leader,
+        "ai_summary": " ".join(ai_notes)
     }
 
-    save_candidate_pool(data)
-    return data
+
+def calc_feedback_score(row):
+    count = safe_int(row.get("count", 0))
+    winrate = safe_float(row.get("winrate", 0))
+    total_pnl = safe_float(row.get("total_pnl", 0))
+    avg_return = safe_float(row.get("avg_return", 0))
+    expectancy = safe_float(row.get("expectancy", 0))
+
+    if count < MIN_FEEDBACK_SAMPLE:
+        return 0, "樣本不足，不調整"
+
+    score = 0
+
+    if winrate >= 65 and total_pnl > 0:
+        score += 18
+    elif winrate >= 55 and total_pnl > 0:
+        score += 10
+    elif winrate < 40 and total_pnl < 0:
+        score -= 18
+    elif winrate < 45 and avg_return < 0:
+        score -= 10
+
+    if avg_return >= 5:
+        score += 8
+    elif avg_return <= -3:
+        score -= 8
+
+    if expectancy > 0:
+        score += min(expectancy / 1000, 8)
+    elif expectancy < 0:
+        score += max(expectancy / 1000, -8)
+
+    score = round2(max(min(score, MAX_FEEDBACK_BONUS), MAX_FEEDBACK_PENALTY))
+
+    if score > 0:
+        note = f"歷史表現佳，加分 {score}"
+    elif score < 0:
+        note = f"歷史表現弱，扣分 {score}"
+    else:
+        note = "表現普通，不調整"
+
+    return score, note
 
 
-# =====================================================
-# 持股管理 AI
-# =====================================================
+def calc_strategy_feedback(logs):
+    dashboard = calc_strategy_dashboard(logs)
+
+    groups = {
+        "buy_type": dashboard.get("by_buy_type", []),
+        "sector": dashboard.get("by_sector", []),
+        "level": dashboard.get("by_level", []),
+        "risk_reward_group": dashboard.get("by_risk_reward", []),
+        "market_status": dashboard.get("by_market", []),
+        "leader_status": dashboard.get("by_leader", []),
+    }
+
+    feedback = {
+        "enabled": len(logs) >= MIN_FEEDBACK_SAMPLE,
+        "total_logs": len(logs),
+        "min_sample": MIN_FEEDBACK_SAMPLE,
+        "weights": {},
+        "rows": [],
+        "summary": ""
+    }
+
+    if len(logs) < MIN_FEEDBACK_SAMPLE:
+        feedback["summary"] = f"目前結案交易 {len(logs)} 筆，未達 {MIN_FEEDBACK_SAMPLE} 筆，AI反饋權重暫不啟用。"
+        return feedback
+
+    for group_name, rows in groups.items():
+        feedback["weights"][group_name] = {}
+
+        for row in rows:
+            name = row.get("name", "未分類")
+            score, note = calc_feedback_score(row)
+
+            feedback["weights"][group_name][name] = score
+
+            if score != 0:
+                feedback["rows"].append({
+                    "group": group_name,
+                    "name": name,
+                    "score": score,
+                    "note": note,
+                    "count": row.get("count", 0),
+                    "winrate": row.get("winrate", 0),
+                    "total_pnl": row.get("total_pnl", 0),
+                    "avg_return": row.get("avg_return", 0)
+                })
+
+    positive = len([x for x in feedback["rows"] if x["score"] > 0])
+    negative = len([x for x in feedback["rows"] if x["score"] < 0])
+
+    feedback["summary"] = f"AI反饋權重已啟用：目前根據 {len(logs)} 筆結案交易，產生 {positive} 個加分條件、{negative} 個扣分條件。"
+
+    feedback["rows"] = sorted(feedback["rows"], key=lambda x: abs(x["score"]), reverse=True)
+
+    return feedback
+
+
+def apply_strategy_feedback(item, feedback):
+    if not feedback.get("enabled"):
+        item["feedback_score"] = 0
+        item["feedback_notes"] = ["樣本不足，尚未套用AI反饋權重"]
+        return item
+
+    weights = feedback.get("weights", {})
+    total = 0
+    notes = []
+
+    mapping = {
+        "buy_type": item.get("buy_type", "未分類"),
+        "sector": item.get("sector", "未分類"),
+        "level": item.get("level", "未分類"),
+        "risk_reward_group": item.get("risk_reward_group", "未分類"),
+        "market_status": item.get("market_status", "未分類"),
+        "leader_status": item.get("leader_status", "未分類"),
+    }
+
+    for group_name, key in mapping.items():
+        score = safe_float(weights.get(group_name, {}).get(key, 0))
+
+        if score != 0:
+            total += score
+            notes.append(f"{group_name}:{key} {score:+}")
+
+    total = round2(max(min(total, MAX_FEEDBACK_BONUS), MAX_FEEDBACK_PENALTY))
+
+    item["feedback_score"] = total
+    item["feedback_notes"] = notes if notes else ["無明顯反饋調整"]
+    item["score"] = round2(item.get("score", 0) + total)
+
+    return item
+
+
 def normalize_track_record(track):
     if "price" not in track:
         track["price"] = safe_float(track.get("entry_price"), 0)
@@ -1686,6 +1867,7 @@ def calc_holding_management(track, df):
     invalid_price = safe_float(track.get("invalid_price")) or support * 0.985
 
     practical_stop = safe_float(track.get("practical_stop"))
+
     if not practical_stop and atr:
         practical_stop = max(support * 0.985, entry - atr * 1.5)
     elif not practical_stop:
@@ -1796,10 +1978,13 @@ def calc_holding_management(track, df):
         ai_exit_notice = "尚未跌破AI移動風控區、支撐點或實戰停損價，依策略續抱。"
 
     scale_out_note = "尚未觸發分批出場"
+
     if curr <= conservative_trail:
         scale_out_note = "建議先減碼 1/3"
+
     if curr <= standard_trail:
         scale_out_note = "建議再減碼 1/3 或停損"
+
     if curr <= practical_stop:
         scale_out_note = "建議全出"
 
@@ -1841,192 +2026,6 @@ def calc_holding_management(track, df):
     return track
 
 
-# =====================================================
-# 交易績效統計
-# =====================================================
-def trade_return_value(log):
-    total = safe_float(log.get("total_pnl"), None)
-    if total is not None and total != 0:
-        return total
-
-    pnl_pct = safe_float(log.get("pnl_pct"), 0)
-    entry = safe_float(log.get("entry_price"), 0)
-    shares = safe_int(log.get("shares"), 0)
-
-    if entry and shares:
-        return round2(entry * shares * pnl_pct / 100)
-
-    return pnl_pct
-
-
-def calc_group_stats(logs, key_name):
-    group_map = {}
-
-    for log in logs:
-        key = log.get(key_name) or "未分類"
-        group_map.setdefault(key, []).append(log)
-
-    rows = []
-
-    for key, arr in group_map.items():
-        returns = [trade_return_value(x) for x in arr]
-        pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in arr]
-
-        wins = [r for r in returns if r > 0]
-        losses = [r for r in returns if r < 0]
-
-        count = len(arr)
-        winrate = round2(len(wins) / count * 100) if count else 0
-
-        avg_return = round2(sum(pct_returns) / count) if count else 0
-        total_pnl = round2(sum(returns))
-
-        avg_win = round2(sum(wins) / len(wins)) if wins else 0
-        avg_loss = round2(sum(losses) / len(losses)) if losses else 0
-
-        if avg_loss != 0:
-            payoff_ratio = round2(abs(avg_win / avg_loss))
-        else:
-            payoff_ratio = 0
-
-        expectancy = round2(total_pnl / count) if count else 0
-
-        if count < 3:
-            ai_comment = "樣本不足，先觀察"
-            ai_level = "neutral"
-        elif winrate >= 60 and total_pnl > 0 and avg_return > 0:
-            ai_comment = "表現良好，可保留或提高權重"
-            ai_level = "good"
-        elif winrate < 40 and total_pnl < 0:
-            ai_comment = "表現偏弱，建議降權或提高門檻"
-            ai_level = "bad"
-        elif total_pnl > 0:
-            ai_comment = "有獲利能力，但仍需觀察穩定性"
-            ai_level = "normal"
-        else:
-            ai_comment = "效果普通，建議保守使用"
-            ai_level = "warning"
-
-        rows.append({
-            "name": key,
-            "count": count,
-            "winrate": winrate,
-            "avg_return": avg_return,
-            "total_pnl": total_pnl,
-            "avg_win": avg_win,
-            "avg_loss": avg_loss,
-            "payoff_ratio": payoff_ratio,
-            "expectancy": expectancy,
-            "ai_comment": ai_comment,
-            "ai_level": ai_level
-        })
-
-    rows = sorted(rows, key=lambda x: (x["total_pnl"], x["winrate"], x["count"]), reverse=True)
-    return rows
-
-
-def calc_strategy_dashboard(logs):
-    if not logs:
-        return {
-            "total_count": 0,
-            "winrate": 0,
-            "total_pnl": 0,
-            "avg_return": 0,
-            "avg_win": 0,
-            "avg_loss": 0,
-            "payoff_ratio": 0,
-            "best_trade": "-",
-            "worst_trade": "-",
-            "avg_hold_days": 0,
-            "by_buy_type": [],
-            "by_sector": [],
-            "by_level": [],
-            "by_risk_reward": [],
-            "by_market": [],
-            "by_leader": [],
-            "ai_summary": "目前尚無結案交易，先累積樣本。"
-        }
-
-    returns = [trade_return_value(x) for x in logs]
-    pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in logs]
-
-    wins = [r for r in returns if r > 0]
-    losses = [r for r in returns if r < 0]
-
-    count = len(logs)
-    winrate = round2(len(wins) / count * 100)
-    total_pnl = round2(sum(returns))
-    avg_return = round2(sum(pct_returns) / count)
-
-    avg_win = round2(sum(wins) / len(wins)) if wins else 0
-    avg_loss = round2(sum(losses) / len(losses)) if losses else 0
-
-    if avg_loss != 0:
-        payoff_ratio = round2(abs(avg_win / avg_loss))
-    else:
-        payoff_ratio = 0
-
-    best = max(logs, key=lambda x: trade_return_value(x))
-    worst = min(logs, key=lambda x: trade_return_value(x))
-
-    hold_days = [
-        days_between(x.get("entry_date", ""), x.get("exit_date", ""))
-        for x in logs
-    ]
-    avg_hold_days = round2(sum(hold_days) / len(hold_days)) if hold_days else 0
-
-    by_buy_type = calc_group_stats(logs, "buy_type")
-    by_sector = calc_group_stats(logs, "sector")
-    by_level = calc_group_stats(logs, "level")
-    by_risk_reward = calc_group_stats(logs, "risk_reward_group")
-    by_market = calc_group_stats(logs, "market_status")
-    by_leader = calc_group_stats(logs, "leader_status")
-
-    ai_notes = []
-
-    if winrate >= 55 and total_pnl > 0:
-        ai_notes.append("整體策略目前為正向，可持續累積樣本。")
-    elif total_pnl < 0:
-        ai_notes.append("整體績效目前偏弱，建議降低部位並檢查失敗類型。")
-    else:
-        ai_notes.append("整體樣本仍需累積，先不要過度調整策略。")
-
-    if by_buy_type:
-        best_type = by_buy_type[0]
-        ai_notes.append(f"目前表現較佳的買點為「{best_type['name']}」，勝率 {best_type['winrate']}%，總損益 {best_type['total_pnl']}。")
-
-    bad_types = [x for x in by_buy_type if x["count"] >= 3 and x["total_pnl"] < 0 and x["winrate"] < 40]
-    if bad_types:
-        ai_notes.append(f"「{bad_types[0]['name']}」表現偏弱，建議降權或提高進場門檻。")
-
-    rr_bad = [x for x in by_risk_reward if "低於1.5" in x["name"] and x["count"] > 0 and x["total_pnl"] <= 0]
-    if rr_bad:
-        ai_notes.append("風報比低於1.5的交易不理想，建議維持不列入進場提醒。")
-
-    return {
-        "total_count": count,
-        "winrate": winrate,
-        "total_pnl": total_pnl,
-        "avg_return": avg_return,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss,
-        "payoff_ratio": payoff_ratio,
-        "best_trade": f"{best.get('name', '-')} / {trade_return_value(best)}",
-        "worst_trade": f"{worst.get('name', '-')} / {trade_return_value(worst)}",
-        "avg_hold_days": avg_hold_days,
-        "by_buy_type": by_buy_type,
-        "by_sector": by_sector,
-        "by_level": by_level,
-        "by_risk_reward": by_risk_reward,
-        "by_market": by_market,
-        "by_leader": by_leader,
-        "ai_summary": " ".join(ai_notes)
-    }
-
-
-# =====================================================
-# 檔案讀寫
-# =====================================================
 def load_track():
     data = read_json_file(TRACK_FILE, [])
     return [normalize_track_record(x) for x in data]
@@ -2073,27 +2072,142 @@ def load_scan_results():
         "entry_alerts": [],
         "candidate_pool": [],
         "sector_rankings": [],
-        "candidate_count": 0
+        "candidate_count": 0,
+        "strategy_feedback": {
+            "enabled": False,
+            "summary": "尚未建立AI反饋權重",
+            "rows": []
+        }
     })
 
 
 def calc_track_stats(tracks):
     valid = [x for x in tracks if isinstance(x.get("pnl"), (int, float))]
+
     if not valid:
         return 0, 0
+
     wins = [x for x in valid if x["pnl"] > 0]
     avg = sum(x["pnl"] for x in valid) / len(valid)
+
     return round2(len(wins) / len(valid) * 100), round2(avg)
 
 
-# =====================================================
-# 全市場掃描
-# =====================================================
+def update_candidate_pool(items):
+    old_data = load_candidate_pool()
+    old_candidates = old_data.get("candidates", {})
+
+    now = taiwan_now()
+    today = today_str()
+
+    new_candidates = {}
+    entry_alerts = []
+
+    for item in items:
+        if item.get("level") not in ["S", "A"]:
+            continue
+
+        if item.get("entry_status") in ["跌破取消", "過熱不追", "不列入", "流動性不足"]:
+            continue
+
+        symbol = item["symbol"]
+        old = old_candidates.get(symbol, {})
+
+        previous_status = old.get("current_status", "-")
+        current_status = item.get("entry_status", "-")
+
+        candidate = {
+            "symbol": symbol,
+            "name": item.get("name", symbol),
+            "level": item.get("level", "-"),
+            "sector": item.get("sector", "-"),
+            "previous_status": previous_status,
+            "current_status": current_status,
+            "buy_type": item.get("buy_type", "-"),
+            "score": item.get("score", 0),
+            "feedback_score": item.get("feedback_score", 0),
+            "feedback_notes": item.get("feedback_notes", []),
+            "support_price": item.get("support_price", 0),
+            "next_entry_low": item.get("next_entry_low", 0),
+            "next_entry_high": item.get("next_entry_high", 0),
+            "no_entry_price": item.get("no_entry_price", 0),
+            "invalid_price": item.get("invalid_price", 0),
+            "practical_stop": item.get("practical_stop", 0),
+            "risk_reward": item.get("risk_reward", 0),
+            "risk_reward_note": item.get("risk_reward_note", "-"),
+            "risk_reward_group": item.get("risk_reward_group", "-"),
+            "target_price": item.get("target_price", 0),
+            "sector_status": item.get("sector_status", "-"),
+            "leader_status": item.get("leader_status", "-"),
+            "leader_names": item.get("leader_names", "-"),
+            "market_status": item.get("market_status", "-"),
+            "resistance_low": item.get("resistance_low", 0),
+            "resistance_high": item.get("resistance_high", 0),
+            "box_low": item.get("box_low", 0),
+            "box_high": item.get("box_high", 0),
+            "breakout_state": item.get("breakout_state", "-"),
+            "egg_zone": item.get("egg_zone", "-"),
+            "candle_signal": item.get("candle_signal", "-"),
+            "ai_next_action": item.get("ai_next_action", "-"),
+            "trade_plan_note": item.get("trade_plan_note", "-"),
+            "updated_at": now,
+            "first_seen": old.get("first_seen", today),
+            "last_seen": today
+        }
+
+        new_candidates[symbol] = candidate
+
+        if current_status == "可觀察進場" and item.get("risk_reward", 0) >= MIN_RISK_REWARD_ENTRY:
+            entry_alerts.append(dict(candidate))
+
+    sorted_candidates = dict(
+        sorted(
+            new_candidates.items(),
+            key=lambda kv: (
+                1 if kv[1].get("current_status") == "可觀察進場" else 0,
+                kv[1].get("risk_reward", 0),
+                kv[1].get("score", 0)
+            ),
+            reverse=True
+        )
+    )
+
+    entry_alerts = sorted(
+        entry_alerts,
+        key=lambda x: (x.get("level") == "S", x.get("risk_reward", 0), x.get("score", 0)),
+        reverse=True
+    )[:MAX_ENTRY_ALERTS]
+
+    data = {
+        "updated_at": now,
+        "candidates": sorted_candidates,
+        "entry_alerts": entry_alerts
+    }
+
+    save_candidate_pool(data)
+    return data
+
+
+def load_candidate_pool():
+    return read_json_file(CANDIDATE_FILE, {
+        "updated_at": "-",
+        "candidates": {},
+        "entry_alerts": []
+    })
+
+
+def save_candidate_pool(data):
+    write_json_file(CANDIDATE_FILE, data)
+
+
 def scan_market():
     save_scan_status("running", "正在建立全市場股票池。")
     print("開始掃描：", taiwan_now())
 
     stocks = get_stock_pool()
+    trade_logs = load_trade_log()
+    strategy_feedback = calc_strategy_feedback(trade_logs)
+
     market_info = get_market_status()
     market_score = market_info["market_score"]
 
@@ -2139,6 +2253,7 @@ def scan_market():
     sector_scores = calc_sector_scores(analyzed)
 
     leader_scores = {}
+
     for sector in sector_scores.keys():
         leader_scores[sector] = calc_leader_strength(sector, analyzed_map)
 
@@ -2167,6 +2282,7 @@ def scan_market():
 
         item.update(sector_data)
         item.update(leader_data)
+
         item["sector_rank"] = sector_rank_map.get(item["sector"], 999)
         item["combined_sector_score"] = combined_sector_score_map.get(item["sector"], item.get("sector_score", 0))
         item["market_status"] = market_info.get("market_status", "-")
@@ -2187,12 +2303,23 @@ def scan_market():
         item.update(build_trade_plan(item))
         item.update(calc_position_sizing(item, market_info))
 
+        preliminary_level = "A"
+
+        if item["score"] >= 230 and item.get("main_score", 0) >= 50 and item.get("combined_sector_score", 0) >= 25:
+            preliminary_level = "S"
+
+        item["level"] = preliminary_level
+
+        item = apply_strategy_feedback(item, strategy_feedback)
+
         level = classify_stock(item)
 
         if not level:
             continue
 
         item["level"] = level
+
+        item = apply_strategy_feedback(item, strategy_feedback)
 
         if not market_info.get("allow_new_positions"):
             item["entry_status"] = "禁止新倉"
@@ -2202,7 +2329,16 @@ def scan_market():
         item.pop("df", None)
         final_items.append(item)
 
-    final_items = sorted(final_items, key=lambda x: (x.get("level") == "S", x.get("risk_reward", 0), x.get("score", 0)), reverse=True)
+    final_items = sorted(
+        final_items,
+        key=lambda x: (
+            x.get("level") == "S",
+            x.get("risk_reward", 0),
+            x.get("feedback_score", 0),
+            x.get("score", 0)
+        ),
+        reverse=True
+    )
 
     candidate_data = update_candidate_pool(final_items)
 
@@ -2229,7 +2365,8 @@ def scan_market():
         "sector_rankings": sector_rankings,
         "candidate_count": len(candidate_pool_list),
         "candidate_pool": candidate_pool_list,
-        "entry_alerts": entry_alerts
+        "entry_alerts": entry_alerts,
+        "strategy_feedback": strategy_feedback
     }
 
     save_scan_results(scan_data)
@@ -2240,9 +2377,6 @@ def scan_market():
     )
 
 
-# =====================================================
-# 首頁
-# =====================================================
 @app.route("/")
 def index():
     scan_data = load_scan_results()
@@ -2255,6 +2389,7 @@ def index():
     trade_logs = load_trade_log()
 
     updated_tracks = []
+
     for t in tracks:
         df = download_stock(t["symbol"], "1y")
         t = calc_holding_management(t, df)
@@ -2264,6 +2399,11 @@ def index():
 
     winrate, avg = calc_track_stats(updated_tracks)
     strategy_dashboard = calc_strategy_dashboard(trade_logs)
+
+    strategy_feedback = scan_data.get("strategy_feedback")
+
+    if not strategy_feedback:
+        strategy_feedback = calc_strategy_feedback(trade_logs)
 
     return render_template(
         "index.html",
@@ -2298,6 +2438,7 @@ def index():
         tracks=updated_tracks,
         trade_logs=trade_logs[-10:],
         strategy_dashboard=strategy_dashboard,
+        strategy_feedback=strategy_feedback,
         winrate=winrate,
         avg=avg,
         account_size=ACCOUNT_SIZE,
@@ -2305,9 +2446,6 @@ def index():
     )
 
 
-# =====================================================
-# 路由
-# =====================================================
 @app.route("/scan-now")
 def scan_now():
     global is_scanning
@@ -2334,8 +2472,10 @@ def scan_now():
 def find_item_by_symbol(symbol):
     candidate_data = load_candidate_pool()
     candidate = candidate_data.get("candidates", {}).get(symbol)
+
     if candidate:
         return candidate
+
     return None
 
 
@@ -2388,6 +2528,8 @@ def track(symbol):
         "sector_status": item.get("sector_status", "-"),
         "leader_status": item.get("leader_status", "-"),
         "market_status": item.get("market_status", "-"),
+        "feedback_score": item.get("feedback_score", 0),
+        "feedback_notes": item.get("feedback_notes", []),
         "date": today_str(),
         "ai_holding_status": "剛加入追蹤",
         "ai_exit_notice": "等待隔日開盤與支撐確認。",
@@ -2554,6 +2696,8 @@ def close_trade(symbol):
         "market_status": item.get("market_status", "未記錄"),
         "sector_status": item.get("sector_status", "未記錄"),
         "leader_status": item.get("leader_status", "未記錄"),
+        "feedback_score": item.get("feedback_score", 0),
+        "feedback_notes": item.get("feedback_notes", []),
         "note": item.get("note", ""),
         "trade_actions": item.get("trade_actions", []),
         "ai_holding_status": item.get("ai_holding_status"),
@@ -2568,9 +2712,6 @@ def close_trade(symbol):
     return redirect(url_for("index"))
 
 
-# =====================================================
-# 每天 16:00 自動掃描
-# =====================================================
 def scheduled_scan():
     global is_scanning
 
