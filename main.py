@@ -1062,7 +1062,235 @@ def format_line_daily_review():
     )
 
 
+
+def format_line_open_watch():
+    scan = load_scan_results()
+    alerts = scan.get("entry_alerts", [])
+    candidates = scan.get("candidate_pool", [])
+    watch_list = alerts if alerts else candidates[:8]
+
+    rows = [
+        "🌅 09:10 開盤監測",
+        f"大盤：{scan.get('market_status', '-')}",
+        f"操作模式：{scan.get('risk_mode', '-')}",
+        f"風險開關：{scan.get('risk_switch', '-')}",
+        "",
+        "重點：開盤只做監測，不急著追價。"
+    ]
+
+    if not watch_list:
+        rows.append("\n目前沒有可監測的候選股票。")
+        return "\n".join(rows)
+
+    for a in watch_list[:6]:
+        name = a.get("name", "-")
+        symbol = short_symbol(a.get("symbol", ""))
+        entry_low = safe_float(a.get("next_entry_low", 0))
+        entry_high = safe_float(a.get("next_entry_high", 0))
+        no_entry = safe_float(a.get("no_entry_price", 0))
+        support = safe_float(a.get("support_price", 0))
+        buy_type = a.get("buy_type", "-")
+        planned_note = a.get("ai_next_action", "-")
+
+        current_price = safe_float(a.get("open_price", 0)) or safe_float(a.get("day_close", 0)) or safe_float(a.get("price", 0))
+        if not current_price:
+            try:
+                df = download_stock(a.get("symbol"), "5d")
+                current_price = safe_float(df["Open"].iloc[-1]) if df is not None and not df.empty else 0
+            except Exception:
+                current_price = 0
+
+        if current_price and entry_low and entry_high:
+            if current_price > entry_high:
+                status = "開太高，不追"
+                advice = f"列入觀察，等回採 {entry_high} 附近不破再考慮。"
+            elif current_price < no_entry:
+                status = "跳空或開低跌破，不進"
+                advice = f"先觀察是否站回 {no_entry} 之上，沒有站回就取消。"
+            elif entry_low <= current_price <= entry_high:
+                status = "進入觀察區"
+                advice = "先看大盤方向與量能，收盤前再確認是否試單。"
+            elif current_price >= no_entry and current_price < entry_low:
+                status = "低於進場區但未破支撐"
+                advice = "可觀察是否站回進場區，不急進。"
+            else:
+                status = "觀察中"
+                advice = planned_note
+        else:
+            status = a.get("current_status", a.get("entry_status", "-"))
+            advice = planned_note
+
+        rows.append(
+            f"\n{name} {symbol}\n"
+            f"買點：{buy_type}\n"
+            f"計畫區間：{entry_low} ～ {entry_high}\n"
+            f"目前/開盤：約 {round2(current_price)}\n"
+            f"跌破不進：{no_entry}\n"
+            f"支撐：{support}\n"
+            f"狀態：{status}\n"
+            f"AI：{advice}"
+        )
+
+    return "\n".join(rows)
+
+
+def format_line_preclose_decision():
+    scan = load_scan_results()
+    alerts = scan.get("entry_alerts", [])
+    candidates = scan.get("candidate_pool", [])
+    watch_list = alerts if alerts else candidates[:8]
+
+    rows = [
+        "🕐 13:20 收盤前決策",
+        f"大盤：{scan.get('market_status', '-')}",
+        f"操作模式：{scan.get('risk_mode', '-')}",
+        "",
+        "先看持股風控，再看是否仍符合前一晚交易計畫。"
+    ]
+
+    tracks = load_track()
+    if tracks:
+        rows.append("\n📌 持股處理")
+        for t in tracks[:5]:
+            try:
+                df = download_stock(t["symbol"], "1y")
+                t = manage_holding(t, df)
+            except Exception:
+                pass
+
+            status = t.get("ai_holding_status", "-")
+            if status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"]:
+                action = "🚨 減碼或出場"
+            elif status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"]:
+                action = "⚠️ 注意停利"
+            else:
+                action = "✅ 續抱"
+
+            rows.append(
+                f"\n{t.get('name','-')} {short_symbol(t.get('symbol',''))}\n"
+                f"現價：{t.get('curr','-')}｜成本：{t.get('price','-')}｜損益：{t.get('pnl','-')}%\n"
+                f"狀態：{status}\n"
+                f"判斷：{action}\n"
+                f"風控：{t.get('trail_range','-')}\n"
+                f"AI：{t.get('ai_exit_notice','-')}"
+            )
+    else:
+        rows.append("\n📌 持股處理\n目前沒有追蹤中的持股。")
+
+    rows.append("\n🚀 收盤前可試單觀察")
+    if not watch_list:
+        rows.append("目前沒有可觀察進場股票。")
+        return "\n".join(rows)
+
+    found = 0
+    for a in watch_list[:8]:
+        name = a.get("name", "-")
+        symbol = short_symbol(a.get("symbol", ""))
+        entry_low = safe_float(a.get("next_entry_low", 0))
+        entry_high = safe_float(a.get("next_entry_high", 0))
+        no_entry = safe_float(a.get("no_entry_price", 0))
+        support = safe_float(a.get("support_price", 0))
+        rr = a.get("risk_reward", "-")
+        buy_type = a.get("buy_type", "-")
+
+        current_price = safe_float(a.get("day_close", 0)) or safe_float(a.get("price", 0))
+        if not current_price:
+            try:
+                df = download_stock(a.get("symbol"), "5d")
+                current_price = safe_float(df["Close"].iloc[-1]) if df is not None and not df.empty else 0
+            except Exception:
+                current_price = 0
+
+        if current_price and entry_low and entry_high:
+            if current_price < no_entry:
+                status = "跌破不進，取消試單"
+                advice = "等重新站回支撐後再觀察。"
+            elif current_price > entry_high:
+                status = "高於進場區，不追"
+                advice = "等回採不破再考慮。"
+            elif entry_low <= current_price <= entry_high:
+                status = "仍在進場區間"
+                advice = "若大盤未破支撐，可小部位試單。"
+                found += 1
+            elif current_price >= no_entry and current_price < entry_low:
+                status = "未破支撐但尚未站回進場區"
+                advice = "可繼續觀察，暫不急買。"
+            else:
+                status = "觀察中"
+                advice = a.get("ai_next_action", "-")
+        else:
+            status = a.get("current_status", a.get("entry_status", "-"))
+            advice = a.get("ai_next_action", "-")
+
+        rows.append(
+            f"\n{name} {symbol}\n"
+            f"買點：{buy_type}\n"
+            f"目前價：約 {round2(current_price)}\n"
+            f"進場區：{entry_low} ～ {entry_high}\n"
+            f"跌破不進：{no_entry}\n"
+            f"支撐：{support}\n"
+            f"風報比：{rr}\n"
+            f"狀態：{status}\n"
+            f"AI：{advice}"
+        )
+
+    if found == 0:
+        rows.append("\n目前沒有明確落在進場區且可試單的股票。")
+
+    return "\n".join(rows)
+
+
+def format_line_next_day_plan():
+    scan = load_scan_results()
+    alerts = scan.get("entry_alerts", [])
+    candidates = scan.get("candidate_pool", [])
+    plan_list = alerts if alerts else candidates[:8]
+
+    rows = [
+        "📊 16:05 盤後交易計畫",
+        f"大盤：{scan.get('market_status','-')}",
+        f"操作模式：{scan.get('risk_mode','-')}",
+        f"風險開關：{scan.get('risk_switch','-')}",
+        f"股票池：{scan.get('stock_pool_count',0)} 檔",
+        f"AI候選：{scan.get('candidate_count',0)} 檔",
+        f"進場提醒：{len(alerts)} 檔",
+        "",
+        "明日策略：前一天規劃，隔天開盤驗證，收盤前決策。"
+    ]
+
+    sectors = scan.get("sector_rankings", [])
+    if sectors:
+        rows.append("\n🔥 主流族群")
+        rows.append("、".join([x.get("sector", "-") for x in sectors[:3]]))
+
+    if not plan_list:
+        rows.append("\n目前沒有明日交易計畫。")
+        return "\n".join(rows)
+
+    rows.append("\n🚀 明日觀察清單")
+
+    for a in plan_list[:6]:
+        rows.append(
+            f"\n{a.get('name','-')} {short_symbol(a.get('symbol',''))}\n"
+            f"買點：{a.get('buy_type','-')}\n"
+            f"明日進場區：{a.get('next_entry_low','-')} ～ {a.get('next_entry_high','-')}\n"
+            f"跌破不進：{a.get('no_entry_price','-')}\n"
+            f"開盤超過不追：{a.get('next_entry_high','-')}\n"
+            f"停損：{a.get('practical_stop','-')}\n"
+            f"風報比：{a.get('risk_reward','-')}\n"
+            f"AI：{a.get('ai_next_action','-')}"
+        )
+
+    return "\n".join(rows)
+
+
 def format_line_message(mode="all"):
+    if mode == "open":
+        return format_line_open_watch()
+    if mode == "preclose":
+        return format_line_preclose_decision()
+    if mode == "nextday":
+        return format_line_next_day_plan()
     if mode == "holding":
         return format_line_holding_status()
     if mode == "entry":
@@ -1075,7 +1303,6 @@ def format_line_message(mode="all"):
         + "\n\n----------------\n\n"
         + format_line_entry_alerts()
     )
-
 
 def send_line_notification(mode="all"):
     ok, info = push_line_message(format_line_message(mode))
@@ -1135,6 +1362,27 @@ def line_holding():
 @app.route("/line-entry")
 def line_entry():
     ok, info = send_line_notification("entry")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+@app.route("/line-open-watch")
+def line_open_watch():
+    ok, info = send_line_notification("open")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+@app.route("/line-preclose")
+def line_preclose():
+    ok, info = send_line_notification("preclose")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+@app.route("/line-nextday")
+def line_nextday():
+    ok, info = send_line_notification("nextday")
     save_scan_status("done" if ok else "error", info)
     return redirect(url_for("index"))
 
@@ -1351,9 +1599,13 @@ scheduler.add_job(scheduled_scan, trigger="cron", hour=16, minute=0, id="daily_m
 # 13:20 收盤前風控提醒
 # 16:05 盤後持股狀態 + 進場提醒
 
-scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=9, minute=10, id="line_holding_0910", replace_existing=True)
-scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=13, minute=20, id="line_holding_1320", replace_existing=True)
-scheduler.add_job(lambda: send_line_notification("all"), trigger="cron", hour=16, minute=5, id="line_all_1605", replace_existing=True)
+# 09:10 開盤監測：檢查昨晚觀察池是否進入區間、開太高不追、跳空跌破不進
+# 13:20 收盤前決策：持股風控 + 是否仍符合計畫可試單
+# 16:05 盤後交易計畫：整理明日觀察清單與進場區間
+scheduler.add_job(lambda: send_line_notification("open"), trigger="cron", hour=9, minute=10, id="line_open_watch_0910", replace_existing=True)
+scheduler.add_job(lambda: send_line_notification("preclose"), trigger="cron", hour=13, minute=20, id="line_preclose_1320", replace_existing=True)
+scheduler.add_job(lambda: send_line_notification("nextday"), trigger="cron", hour=16, minute=5, id="line_nextday_1605", replace_existing=True)
+
 scheduler.start()
 
 if __name__ == "__main__":
