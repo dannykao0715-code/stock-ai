@@ -20,7 +20,7 @@ body {
 }
 
 .container {
-    max-width: 1500px;
+    max-width: 1600px;
 }
 
 h2, h4, h5 {
@@ -125,6 +125,12 @@ hr {
 .badge-feedback {
     background: #facc15;
     color: #111827;
+    font-weight: 900;
+}
+
+.badge-exec {
+    background: #22c55e;
+    color: #052e16;
     font-weight: 900;
 }
 
@@ -352,13 +358,28 @@ hr {
         <div class="label">AI目前狀態</div>
         {% if t.ai_holding_status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"] %}
             <div class="big-price bad">{{ t.ai_holding_status }}</div>
-        {% elif t.ai_holding_status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利"] %}
+        {% elif t.ai_holding_status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"] %}
             <div class="big-price warning">{{ t.ai_holding_status }}</div>
         {% else %}
             <div class="big-price good">{{ t.ai_holding_status }}</div>
         {% endif %}
 
         <div class="small-text mb-3">{{ t.ai_exit_notice }}</div>
+
+        <hr>
+
+        <div class="label">執行品質分析</div>
+        <div>系統建議：<span class="warning">{{ t.suggest_entry_low }} ～ {{ t.suggest_entry_high }}</span></div>
+        <div>實際成本：<span class="warning">{{ t.price }}</span></div>
+        <div>執行品質：<span class="blue">{{ t.execution_quality }}</span></div>
+        <div>成交偏差率：<span class="warning">{{ t.entry_deviation_pct }}%</span></div>
+
+        <hr>
+
+        <div class="label">出場績效分析</div>
+        <div>最大浮盈：<span class="good">{{ t.max_favorable_pct }}%</span></div>
+        <div>最大回撤：<span class="bad">{{ t.max_drawdown_pct }}%</span></div>
+        <div>獲利回吐：<span class="warning">{{ t.profit_giveback_pct }}%</span></div>
 
         <hr>
 
@@ -383,6 +404,13 @@ hr {
         <div>假突破失效價：<span class="bad">{{ t.invalid_price }}</span></div>
         <div>支撐點：<span class="blue">{{ t.support_price }}</span></div>
         <div>進場後最高：<span class="warning">{{ t.highest_since_entry }}</span></div>
+
+        <hr>
+
+        <div class="label">多時間框架</div>
+        <div>週K：<span class="blue">{{ t.weekly_trend }}</span></div>
+        <div>日K：<span class="blue">{{ t.daily_signal }}</span></div>
+        <div>共振：<span class="warning">{{ t.mtf_status }}</span></div>
 
         <hr>
 
@@ -579,6 +607,34 @@ hr {
             <div class="big-price">{{ strategy_dashboard.avg_return }}%</div>
         </div>
     </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均最大浮盈</div>
+            <div class="big-price good">{{ strategy_dashboard.avg_max_favorable }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均獲利回吐</div>
+            <div class="big-price warning">{{ strategy_dashboard.avg_giveback }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">停損執行參考率</div>
+            <div class="big-price">{{ strategy_dashboard.stop_execution_rate }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均持有天數</div>
+            <div class="big-price">{{ strategy_dashboard.avg_hold_days }}</div>
+        </div>
+    </div>
 </div>
 
 <div class="alert alert-secondary">
@@ -651,10 +707,12 @@ hr {
 {{ stat_table("依風報比區間統計", strategy_dashboard.by_risk_reward) }}
 {{ stat_table("依大盤狀態統計", strategy_dashboard.by_market) }}
 {{ stat_table("依龍頭狀態統計", strategy_dashboard.by_leader) }}
+{{ stat_table("依失敗型態統計", strategy_dashboard.by_failure_type) }}
+{{ stat_table("依執行品質統計", strategy_dashboard.by_execution_quality) }}
 
 <hr>
 
-<h4 class="section-title">🚨 今日進場提醒｜Top-Down AI交易計畫</h4>
+<h4 class="section-title">🚨 今日進場提醒｜AI開盤/盤中執行判斷</h4>
 
 {% if entry_alerts %}
 <div class="row">
@@ -664,6 +722,7 @@ hr {
 
         <span class="badge badge-entry mb-2">AI進場提醒</span>
         <span class="badge badge-topdown mb-2">Top-Down通過</span>
+        <span class="badge badge-exec mb-2">{{ a.execution_action }}</span>
         <span class="badge badge-feedback mb-2">反饋 {{ a.feedback_score }}</span>
 
         <div class="plan-title">{{ a.name }}</div>
@@ -685,19 +744,19 @@ hr {
 
         <hr>
 
-        <div>風報比：<span class="blue">{{ a.risk_reward }}</span> ｜ {{ a.risk_reward_note }}</div>
-        <div>目標價：<span class="warning">{{ a.target_price }}</span></div>
-        <div>AI建議：<span class="warning">{{ a.ai_next_action }}</span></div>
+        <div class="label">AI開盤/盤中判斷</div>
+        <div>開盤價：<span class="warning">{{ a.open_price }}</span></div>
+        <div>日高/日低/收盤：{{ a.day_high }} / {{ a.day_low }} / {{ a.day_close }}</div>
+        <div>開盤狀態：<span class="blue">{{ a.open_status }}</span></div>
+        <div>盤中狀態：<span class="blue">{{ a.intraday_status }}</span></div>
+        <div>AI執行建議：<span class="warning">{{ a.execution_action }}</span></div>
+        <div class="small-text">{{ a.execution_note }}</div>
 
         <hr>
 
-        <div class="label">AI反饋權重</div>
-        <div>反饋分數：<span class="warning">{{ a.feedback_score }}</span></div>
-        {% if a.feedback_notes %}
-            {% for n in a.feedback_notes %}
-                <div class="small-text">{{ n }}</div>
-            {% endfor %}
-        {% endif %}
+        <div>風報比：<span class="blue">{{ a.risk_reward }}</span> ｜ {{ a.risk_reward_note }}</div>
+        <div>目標價：<span class="warning">{{ a.target_price }}</span></div>
+        <div>AI建議：<span class="warning">{{ a.ai_next_action }}</span></div>
 
         <hr>
 
@@ -705,8 +764,16 @@ hr {
         <div>族群狀態：<span class="blue">{{ a.sector_status }}</span></div>
         <div>龍頭狀態：<span class="warning">{{ a.leader_status }}</span></div>
         <div>龍頭參考：{{ a.leader_names }}</div>
+        <div>族群內排名：<span class="warning">{{ a.sector_relative_rank }} / {{ a.sector_relative_total }}</span> ｜ {{ a.sector_relative_status }}</div>
         <div>買點型態：<span class="warning">{{ a.buy_type }}</span></div>
         <div>突破狀態：{{ a.breakout_state }}</div>
+
+        <hr>
+
+        <div class="label">多時間框架</div>
+        <div>週K：<span class="blue">{{ a.weekly_trend }}</span></div>
+        <div>日K：<span class="blue">{{ a.daily_signal }}</span></div>
+        <div>共振：<span class="warning">{{ a.mtf_status }}</span></div>
 
         <hr>
 
@@ -793,7 +860,7 @@ hr {
 <h4 class="section-title">📌 AI候選觀察池｜自動追蹤中</h4>
 
 <div class="mobile-note mb-2">
-這裡只是候選觀察，不代表明天可進場；等大盤、族群、龍頭、個股買點與風報比條件成熟後，才會自動跳到上方「今日進場提醒」。
+這裡只是候選觀察，不代表明天可進場；等大盤、族群、龍頭、個股買點、開盤位置與風報比條件成熟後，才會自動跳到上方「今日進場提醒」。
 </div>
 
 {% if candidate_pool %}
@@ -804,9 +871,9 @@ hr {
 <th>股票</th>
 <th>等級</th>
 <th>族群</th>
-<th>族群狀態</th>
-<th>龍頭狀態</th>
+<th>族群內排名</th>
 <th>目前狀態</th>
+<th>執行建議</th>
 <th>買點</th>
 <th>總分</th>
 <th>反饋</th>
@@ -814,9 +881,9 @@ hr {
 <th>跌破不進</th>
 <th>實戰停損</th>
 <th>風報比</th>
-<th>壓力區</th>
-<th>盤整區</th>
-<th>AI建議</th>
+<th>開盤狀態</th>
+<th>盤中狀態</th>
+<th>週K/日K</th>
 <th>操作</th>
 </tr>
 </thead>
@@ -826,13 +893,21 @@ hr {
 <td>{{ c.name }}<br><span class="small-text">{{ c.symbol }}</span></td>
 <td>{{ c.level }}</td>
 <td>{{ c.sector }}</td>
-<td>{{ c.sector_status }}</td>
-<td>{{ c.leader_status }}</td>
+<td>{{ c.sector_relative_rank }} / {{ c.sector_relative_total }}<br><span class="small-text">{{ c.sector_relative_status }}</span></td>
 <td>
 {% if c.current_status == "可觀察進場" %}
 <span class="good">{{ c.current_status }}</span>
 {% else %}
 <span class="warning">{{ c.current_status }}</span>
+{% endif %}
+</td>
+<td>
+{% if c.execution_action in ["可試單", "可小部位試單"] %}
+<span class="good">{{ c.execution_action }}</span>
+{% elif c.execution_action in ["取消候選", "暫停進場"] %}
+<span class="bad">{{ c.execution_action }}</span>
+{% else %}
+<span class="warning">{{ c.execution_action }}</span>
 {% endif %}
 </td>
 <td>{{ c.buy_type }}</td>
@@ -850,9 +925,9 @@ hr {
 <td><span class="bad">{{ c.no_entry_price }}</span></td>
 <td><span class="bad">{{ c.practical_stop }}</span></td>
 <td>{{ c.risk_reward }}</td>
-<td>{{ c.resistance_low }}～{{ c.resistance_high }}</td>
-<td>{{ c.box_low }}～{{ c.box_high }}</td>
-<td>{{ c.ai_next_action }}</td>
+<td>{{ c.open_status }}</td>
+<td>{{ c.intraday_status }}</td>
+<td>{{ c.weekly_trend }}<br>{{ c.daily_signal }}</td>
 <td>
     <form method="post" action="/track/{{ c.symbol }}">
         <input name="actual_price" class="form-control form-control-sm input-dark mb-1" placeholder="成交價">
@@ -883,18 +958,19 @@ hr {
 <th>進場</th>
 <th>出場</th>
 <th>股數</th>
-<th>已實現</th>
-<th>未實現</th>
 <th>總損益</th>
 <th>損益率</th>
+<th>最大浮盈</th>
+<th>最大回撤</th>
+<th>獲利回吐</th>
+<th>執行品質</th>
+<th>失敗型態</th>
 <th>等級</th>
 <th>買點</th>
-<th>反饋分</th>
 <th>風報比區間</th>
 <th>大盤狀態</th>
 <th>龍頭狀態</th>
 <th>AI狀態</th>
-<th>AI出場提醒</th>
 <th>進場日</th>
 <th>出場日</th>
 </tr>
@@ -906,8 +982,6 @@ hr {
 <td>{{ t.entry_price }}</td>
 <td>{{ t.exit_price }}</td>
 <td>{{ t.shares }}</td>
-<td>{{ t.realized_pnl }}</td>
-<td>{{ t.unrealized_pnl }}</td>
 <td>
 {% if t.total_pnl is number and t.total_pnl > 0 %}
 <span class="good">{{ t.total_pnl }}</span>
@@ -926,14 +1000,17 @@ hr {
 {{ t.pnl_pct }}%
 {% endif %}
 </td>
+<td class="good">{{ t.max_favorable_pct }}%</td>
+<td class="bad">{{ t.max_drawdown_pct }}%</td>
+<td class="warning">{{ t.profit_giveback_pct }}%</td>
+<td>{{ t.execution_quality }}</td>
+<td>{{ t.failure_type }}</td>
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
-<td>{{ t.feedback_score }}</td>
 <td>{{ t.risk_reward_group }}</td>
 <td>{{ t.market_status }}</td>
 <td>{{ t.leader_status }}</td>
 <td>{{ t.ai_holding_status }}</td>
-<td>{{ t.ai_exit_notice }}</td>
 <td>{{ t.entry_date }}</td>
 <td>{{ t.exit_date }}</td>
 </tr>
@@ -948,7 +1025,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版整合：全市場股票池、Top-Down 法人邏輯、突破回採、雞蛋理論、K棒確認、AI交易計畫、AI持股管理、加減碼、交易統計、AI反饋權重。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版整合：全市場股票池、Top-Down法人邏輯、族群內相對強弱、突破回採、雞蛋理論、K棒確認、多時間框架、開盤/盤中執行判斷、AI交易計畫、AI持股管理、成交價偏差分析、失敗型態資料庫、出場績效分析、AI反饋權重。
 </div>
 
 </div>
