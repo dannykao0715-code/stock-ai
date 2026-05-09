@@ -158,6 +158,14 @@ hr {
     height: 100%;
 }
 
+.stat-card {
+    background: linear-gradient(135deg, #172554, #0f172a);
+    border: 1px solid #38bdf8;
+    border-radius: 18px;
+    padding: 18px;
+    height: 100%;
+}
+
 .plan-title {
     font-size: 22px;
     font-weight: 900;
@@ -214,6 +222,26 @@ hr {
     border-radius: 12px;
     padding: 10px;
     margin-top: 10px;
+}
+
+.ai-good {
+    color: #22c55e;
+    font-weight: bold;
+}
+
+.ai-bad {
+    color: #ef4444;
+    font-weight: bold;
+}
+
+.ai-warning {
+    color: #f59e0b;
+    font-weight: bold;
+}
+
+.ai-neutral {
+    color: #94a3b8;
+    font-weight: bold;
 }
 </style>
 </head>
@@ -442,6 +470,151 @@ hr {
 
 <hr>
 
+<h4 class="section-title">📊 AI策略績效統計</h4>
+
+<div class="alert alert-info">
+    {{ strategy_dashboard.ai_summary }}
+</div>
+
+<div class="row">
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">總交易筆數</div>
+            <div class="big-price">{{ strategy_dashboard.total_count }}</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">勝率</div>
+            <div class="big-price">{{ strategy_dashboard.winrate }}%</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">總損益</div>
+            {% if strategy_dashboard.total_pnl > 0 %}
+                <div class="big-price good">{{ strategy_dashboard.total_pnl }}</div>
+            {% elif strategy_dashboard.total_pnl < 0 %}
+                <div class="big-price bad">{{ strategy_dashboard.total_pnl }}</div>
+            {% else %}
+                <div class="big-price">{{ strategy_dashboard.total_pnl }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均報酬率</div>
+            <div class="big-price">{{ strategy_dashboard.avg_return }}%</div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均獲利</div>
+            <div class="big-price good">{{ strategy_dashboard.avg_win }}</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均虧損</div>
+            <div class="big-price bad">{{ strategy_dashboard.avg_loss }}</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">賺賠比</div>
+            <div class="big-price">{{ strategy_dashboard.payoff_ratio }}</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="label">平均持有天數</div>
+            <div class="big-price">{{ strategy_dashboard.avg_hold_days }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-secondary">
+    最佳單筆：{{ strategy_dashboard.best_trade }} ｜ 最差單筆：{{ strategy_dashboard.worst_trade }}
+</div>
+
+{% macro stat_table(title, rows) %}
+<h5 class="section-title">{{ title }}</h5>
+{% if rows %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>分類</th>
+<th>筆數</th>
+<th>勝率</th>
+<th>平均報酬率</th>
+<th>總損益</th>
+<th>平均獲利</th>
+<th>平均虧損</th>
+<th>賺賠比</th>
+<th>期望值</th>
+<th>AI建議</th>
+</tr>
+</thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<td>{{ r.name }}</td>
+<td>{{ r.count }}</td>
+<td>{{ r.winrate }}%</td>
+<td>{{ r.avg_return }}%</td>
+<td>
+{% if r.total_pnl > 0 %}
+<span class="good">{{ r.total_pnl }}</span>
+{% elif r.total_pnl < 0 %}
+<span class="bad">{{ r.total_pnl }}</span>
+{% else %}
+{{ r.total_pnl }}
+{% endif %}
+</td>
+<td class="good">{{ r.avg_win }}</td>
+<td class="bad">{{ r.avg_loss }}</td>
+<td>{{ r.payoff_ratio }}</td>
+<td>{{ r.expectancy }}</td>
+<td>
+{% if r.ai_level == "good" %}
+<span class="ai-good">{{ r.ai_comment }}</span>
+{% elif r.ai_level == "bad" %}
+<span class="ai-bad">{{ r.ai_comment }}</span>
+{% elif r.ai_level == "warning" %}
+<span class="ai-warning">{{ r.ai_comment }}</span>
+{% else %}
+<span class="ai-neutral">{{ r.ai_comment }}</span>
+{% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-secondary">目前尚無資料。</div>
+{% endif %}
+{% endmacro %}
+
+{{ stat_table("依買點型態統計", strategy_dashboard.by_buy_type) }}
+{{ stat_table("依族群統計", strategy_dashboard.by_sector) }}
+{{ stat_table("依S/A等級統計", strategy_dashboard.by_level) }}
+{{ stat_table("依風報比區間統計", strategy_dashboard.by_risk_reward) }}
+{{ stat_table("依大盤狀態統計", strategy_dashboard.by_market) }}
+{{ stat_table("依龍頭狀態統計", strategy_dashboard.by_leader) }}
+
+<hr>
+
 <h4 class="section-title">🚨 今日進場提醒｜Top-Down AI交易計畫</h4>
 
 {% if entry_alerts %}
@@ -663,6 +836,9 @@ hr {
 <th>損益率</th>
 <th>等級</th>
 <th>買點</th>
+<th>風報比區間</th>
+<th>大盤狀態</th>
+<th>龍頭狀態</th>
 <th>AI狀態</th>
 <th>AI出場提醒</th>
 <th>進場日</th>
@@ -698,6 +874,9 @@ hr {
 </td>
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
+<td>{{ t.risk_reward_group }}</td>
+<td>{{ t.market_status }}</td>
+<td>{{ t.leader_status }}</td>
 <td>{{ t.ai_holding_status }}</td>
 <td>{{ t.ai_exit_notice }}</td>
 <td>{{ t.entry_date }}</td>
@@ -714,7 +893,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版新增：追蹤持股可修改成本、股數、停損、備註，並支援加碼、減碼、已實現損益、未實現損益與完整交易紀錄。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版新增：策略績效統計、買點型態統計、族群統計、S/A等級統計、風報比統計、大盤狀態統計、龍頭狀態統計與AI策略建議。
 </div>
 
 </div>
