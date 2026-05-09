@@ -286,8 +286,17 @@ hr {
             明日若開盤跌破此價位，不建議進場，等待重新站回支撐。
         </div>
 
-        <div class="label">假突破失效價 / 初始停損價</div>
-        <div class="big-price bad">{{ a.initial_stop }}</div>
+        <div class="label">實戰停損價</div>
+        <div class="big-price bad">{{ a.practical_stop }}</div>
+        <div class="small-text mb-3">
+            這是實際風控停損點，避免停損抓太遠造成賺少賠多。
+        </div>
+
+        <div class="label">假突破失效價</div>
+        <div class="big-price bad">{{ a.invalid_price }}</div>
+        <div class="small-text mb-3">
+            此價位作為候選失效參考，不建議直接當主要實戰停損。
+        </div>
 
         <hr>
 
@@ -342,7 +351,7 @@ hr {
         <hr>
 
         <div class="label">AI目前狀態</div>
-        {% if t.ai_holding_status in ["立即停損", "支撐失守", "跌破移動停利", "趨勢轉弱"] %}
+        {% if t.ai_holding_status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"] %}
             <div class="big-price bad">{{ t.ai_holding_status }}</div>
         {% elif t.ai_holding_status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利"] %}
             <div class="big-price warning">{{ t.ai_holding_status }}</div>
@@ -354,13 +363,23 @@ hr {
 
         <hr>
 
-        <div class="label">建議移動停利區間</div>
+        <div class="label">AI移動風控區｜{{ t.trail_zone_name }}</div>
         <div class="big-price">{{ t.trail_range }}</div>
+
         <div class="small-text mb-2">
-            保守停利：{{ t.conservative_trail }} ｜ 標準停利：{{ t.standard_trail }} ｜ 寬鬆停利：{{ t.loose_trail }}
+            保守風控：{{ t.conservative_trail }} ｜ 標準風控：{{ t.standard_trail }} ｜ 寬鬆風控：{{ t.loose_trail }}
         </div>
 
-        <div>初始停損：<span class="bad">{{ t.initial_stop }}</span></div>
+        <div class="small-text">
+            若跌破 {{ t.conservative_trail }}：{{ t.conservative_action }}<br>
+            若跌破 {{ t.standard_trail }}：{{ t.standard_action }}<br>
+            若跌破 {{ t.loose_trail }}：{{ t.loose_action }}
+        </div>
+
+        <hr>
+
+        <div>實戰停損價：<span class="bad">{{ t.practical_stop }}</span></div>
+        <div>假突破失效價：<span class="bad">{{ t.invalid_price }}</span></div>
         <div>支撐點：<span class="blue">{{ t.support_price }}</span></div>
         <div>進場後最高：<span class="warning">{{ t.highest_since_entry }}</span></div>
 
@@ -389,7 +408,7 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-目前沒有加入追蹤的股票。進場提醒出現後，按「加入追蹤」，AI會開始管理移動停利、停損出場與波段滿足點。
+目前沒有加入追蹤的股票。進場提醒出現後，按「加入追蹤」，AI會開始管理移動風控、實戰停損、支撐、滿足點。
 </div>
 {% endif %}
 
@@ -454,6 +473,7 @@ hr {
 <th>分數</th>
 <th>明日進場區間</th>
 <th>跌破不進場</th>
+<th>實戰停損</th>
 <th>支撐點</th>
 <th>AI建議</th>
 <th>操作</th>
@@ -477,6 +497,7 @@ hr {
 <td>{{ c.score }}</td>
 <td><span class="warning">{{ c.next_entry_low }} ～ {{ c.next_entry_high }}</span></td>
 <td><span class="bad">{{ c.no_entry_price }}</span></td>
+<td><span class="bad">{{ c.practical_stop }}</span></td>
 <td>{{ c.support_price }}</td>
 <td>{{ c.ai_next_action }}</td>
 <td><a href="/track/{{ c.symbol }}" class="btn btn-warning btn-sm">追蹤</a></td>
@@ -543,7 +564,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已隱藏今日精選與S/A名單，改成實戰流程：候選觀察 → 進場提醒交易計畫 → 加入追蹤 → AI持股管理。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已修正：AI移動風控區會依成本自動判斷為移動停利或移動停損，並新增實戰停損價，避免停損抓太遠造成賺少賠多。
 </div>
 
 </div>
