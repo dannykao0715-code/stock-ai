@@ -130,6 +130,12 @@ hr {
     font-weight: 900;
 }
 
+.badge-feedback {
+    background: #facc15;
+    color: #111827;
+    font-weight: 900;
+}
+
 .btn-refresh {
     background: #2563eb;
     color: #ffffff;
@@ -161,6 +167,14 @@ hr {
 .stat-card {
     background: linear-gradient(135deg, #172554, #0f172a);
     border: 1px solid #38bdf8;
+    border-radius: 18px;
+    padding: 18px;
+    height: 100%;
+}
+
+.feedback-card {
+    background: linear-gradient(135deg, #451a03, #0f172a);
+    border: 1px solid #facc15;
     border-radius: 18px;
     padding: 18px;
     height: 100%;
@@ -397,6 +411,16 @@ hr {
 
         <hr>
 
+        <div class="label">AI反饋紀錄</div>
+        <div>反饋分數：<span class="warning">{{ t.feedback_score }}</span></div>
+        {% if t.feedback_notes %}
+            {% for n in t.feedback_notes %}
+                <div class="small-text">{{ n }}</div>
+            {% endfor %}
+        {% endif %}
+
+        <hr>
+
         <div class="label">目前位階</div>
         <div>雞蛋位階：<span class="warning">{{ t.egg_zone_now }}</span> ｜ {{ t.egg_position_pct_now }}%</div>
         <div>K棒狀態：<span class="purple">{{ t.candle_signal_now }}</span></div>
@@ -470,6 +494,67 @@ hr {
 
 <hr>
 
+<h4 class="section-title">🧠 AI策略反饋權重</h4>
+
+<div class="alert alert-info">
+    {{ strategy_feedback.summary }}
+</div>
+
+{% if strategy_feedback.rows %}
+<div class="table-responsive">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>分類</th>
+<th>條件</th>
+<th>反饋分數</th>
+<th>筆數</th>
+<th>勝率</th>
+<th>平均報酬率</th>
+<th>總損益</th>
+<th>AI判斷</th>
+</tr>
+</thead>
+<tbody>
+{% for r in strategy_feedback.rows %}
+<tr>
+<td>{{ r.group }}</td>
+<td>{{ r.name }}</td>
+<td>
+{% if r.score > 0 %}
+<span class="good">+{{ r.score }}</span>
+{% elif r.score < 0 %}
+<span class="bad">{{ r.score }}</span>
+{% else %}
+{{ r.score }}
+{% endif %}
+</td>
+<td>{{ r.count }}</td>
+<td>{{ r.winrate }}%</td>
+<td>{{ r.avg_return }}%</td>
+<td>
+{% if r.total_pnl > 0 %}
+<span class="good">{{ r.total_pnl }}</span>
+{% elif r.total_pnl < 0 %}
+<span class="bad">{{ r.total_pnl }}</span>
+{% else %}
+{{ r.total_pnl }}
+{% endif %}
+</td>
+<td>{{ r.note }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-secondary">
+目前尚無可套用的AI反饋權重。結案交易達到足夠樣本後，系統會自動產生加分與扣分條件。
+</div>
+{% endif %}
+
+<hr>
+
 <h4 class="section-title">📊 AI策略績效統計</h4>
 
 <div class="alert alert-info">
@@ -508,36 +593,6 @@ hr {
         <div class="stat-card">
             <div class="label">平均報酬率</div>
             <div class="big-price">{{ strategy_dashboard.avg_return }}%</div>
-        </div>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-md-3 mb-3">
-        <div class="stat-card">
-            <div class="label">平均獲利</div>
-            <div class="big-price good">{{ strategy_dashboard.avg_win }}</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="stat-card">
-            <div class="label">平均虧損</div>
-            <div class="big-price bad">{{ strategy_dashboard.avg_loss }}</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="stat-card">
-            <div class="label">賺賠比</div>
-            <div class="big-price">{{ strategy_dashboard.payoff_ratio }}</div>
-        </div>
-    </div>
-
-    <div class="col-md-3 mb-3">
-        <div class="stat-card">
-            <div class="label">平均持有天數</div>
-            <div class="big-price">{{ strategy_dashboard.avg_hold_days }}</div>
         </div>
     </div>
 </div>
@@ -625,6 +680,7 @@ hr {
 
         <span class="badge badge-entry mb-2">AI進場提醒</span>
         <span class="badge badge-topdown mb-2">Top-Down通過</span>
+        <span class="badge badge-feedback mb-2">反饋 {{ a.feedback_score }}</span>
 
         <div class="plan-title">{{ a.name }}</div>
         <div class="small-text mb-2">{{ a.symbol }} ｜ {{ a.sector }} ｜ {{ a.level }}</div>
@@ -651,6 +707,16 @@ hr {
 
         <hr>
 
+        <div class="label">AI反饋權重</div>
+        <div>反饋分數：<span class="warning">{{ a.feedback_score }}</span></div>
+        {% if a.feedback_notes %}
+            {% for n in a.feedback_notes %}
+                <div class="small-text">{{ n }}</div>
+            {% endfor %}
+        {% endif %}
+
+        <hr>
+
         <div class="label">Top-Down 判斷</div>
         <div>族群狀態：<span class="blue">{{ a.sector_status }}</span></div>
         <div>龍頭狀態：<span class="warning">{{ a.leader_status }}</span></div>
@@ -664,13 +730,6 @@ hr {
         <div>前高K棒壓力區：<span class="warning">{{ a.resistance_low }} ～ {{ a.resistance_high }}</span></div>
         <div>盤整區間：<span class="blue">{{ a.box_low }} ～ {{ a.box_high }}</span></div>
         <div>支撐點：<span class="blue">{{ a.support_price }}</span></div>
-
-        <hr>
-
-        <div class="label">分批進場計畫</div>
-        <div>第一筆：30%</div>
-        <div>第二筆：30% ｜ 參考價 {{ a.next_entry_high }}</div>
-        <div>第三筆：40% ｜ 參考價 {{ a.target_price }}</div>
 
         <hr>
 
@@ -765,7 +824,8 @@ hr {
 <th>龍頭狀態</th>
 <th>目前狀態</th>
 <th>買點</th>
-<th>分數</th>
+<th>總分</th>
+<th>反饋</th>
 <th>進場區間</th>
 <th>跌破不進</th>
 <th>實戰停損</th>
@@ -793,6 +853,15 @@ hr {
 </td>
 <td>{{ c.buy_type }}</td>
 <td>{{ c.score }}</td>
+<td>
+{% if c.feedback_score > 0 %}
+<span class="good">+{{ c.feedback_score }}</span>
+{% elif c.feedback_score < 0 %}
+<span class="bad">{{ c.feedback_score }}</span>
+{% else %}
+{{ c.feedback_score }}
+{% endif %}
+</td>
 <td><span class="warning">{{ c.next_entry_low }} ～ {{ c.next_entry_high }}</span></td>
 <td><span class="bad">{{ c.no_entry_price }}</span></td>
 <td><span class="bad">{{ c.practical_stop }}</span></td>
@@ -836,6 +905,7 @@ hr {
 <th>損益率</th>
 <th>等級</th>
 <th>買點</th>
+<th>反饋分</th>
 <th>風報比區間</th>
 <th>大盤狀態</th>
 <th>龍頭狀態</th>
@@ -874,6 +944,7 @@ hr {
 </td>
 <td>{{ t.level }}</td>
 <td>{{ t.buy_type }}</td>
+<td>{{ t.feedback_score }}</td>
 <td>{{ t.risk_reward_group }}</td>
 <td>{{ t.market_status }}</td>
 <td>{{ t.leader_status }}</td>
@@ -893,7 +964,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版新增：策略績效統計、買點型態統計、族群統計、S/A等級統計、風報比統計、大盤狀態統計、龍頭狀態統計與AI策略建議。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版新增：AI策略反饋權重，會根據已結案交易自動對買點、族群、等級、風報比、大盤狀態與龍頭狀態加分或扣分。
 </div>
 
 </div>
