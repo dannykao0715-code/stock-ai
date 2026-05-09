@@ -129,6 +129,15 @@ def round2(x):
     return round(safe_float(x), 2)
 
 
+def days_between(start, end):
+    try:
+        d1 = datetime.strptime(start[:10], "%Y-%m-%d")
+        d2 = datetime.strptime(end[:10], "%Y-%m-%d")
+        return max((d2 - d1).days, 0)
+    except Exception:
+        return 0
+
+
 # =====================================================
 # 掃描狀態
 # =====================================================
@@ -1449,14 +1458,24 @@ def build_trade_plan(item):
         "target_price": target,
         "risk_reward": risk_reward,
         "risk_reward_note": rr_note,
+        "risk_reward_group": get_risk_reward_group(risk_reward),
         "ai_next_action": ai_next_action,
         "first_entry_pct": 30,
         "second_entry_pct": 30,
         "third_entry_pct": 40,
-        "second_add_price": entry_high,
-        "third_add_price": target,
         "trade_plan_note": "依Top-Down流程：大盤位階、族群狀態、龍頭強度、前高K棒壓力區與盤整區間綜合判斷。"
     }
+
+
+def get_risk_reward_group(risk_reward):
+    rr = safe_float(risk_reward)
+    if rr >= 2.5:
+        return "風報比 2.5以上"
+    if rr >= 2.0:
+        return "風報比 2.0~2.5"
+    if rr >= 1.5:
+        return "風報比 1.5~2.0"
+    return "風報比 低於1.5"
 
 
 def calc_position_sizing(item, market_info):
@@ -1474,10 +1493,7 @@ def calc_position_sizing(item, market_info):
             "suggest_shares": 0,
             "suggest_lots": 0,
             "position_value": 0,
-            "risk_per_share": 0,
-            "first_entry_shares": 0,
-            "second_entry_shares": 0,
-            "third_entry_shares": 0
+            "risk_per_share": 0
         }
 
     risk_per_share = entry - stop
@@ -1488,10 +1504,7 @@ def calc_position_sizing(item, market_info):
         "suggest_shares": shares,
         "suggest_lots": lots,
         "position_value": round2(shares * entry),
-        "risk_per_share": round2(risk_per_share),
-        "first_entry_shares": math.floor(shares * 0.3),
-        "second_entry_shares": math.floor(shares * 0.3),
-        "third_entry_shares": math.floor(shares * 0.4)
+        "risk_per_share": round2(risk_per_share)
     }
 
 
@@ -1572,10 +1585,12 @@ def update_candidate_pool(items):
             "practical_stop": item.get("practical_stop", 0),
             "risk_reward": item.get("risk_reward", 0),
             "risk_reward_note": item.get("risk_reward_note", "-"),
+            "risk_reward_group": item.get("risk_reward_group", "-"),
             "target_price": item.get("target_price", 0),
             "sector_status": item.get("sector_status", "-"),
             "leader_status": item.get("leader_status", "-"),
             "leader_names": item.get("leader_names", "-"),
+            "market_status": item.get("market_status", "-"),
             "resistance_low": item.get("resistance_low", 0),
             "resistance_high": item.get("resistance_high", 0),
             "box_low": item.get("box_low", 0),
@@ -1644,6 +1659,9 @@ def normalize_track_record(track):
 
     if "note" not in track:
         track["note"] = ""
+
+    if "risk_reward_group" not in track:
+        track["risk_reward_group"] = get_risk_reward_group(track.get("risk_reward", 0))
 
     return track
 
@@ -1726,12 +1744,8 @@ def calc_holding_management(track, df):
     unrealized_pnl = round2((curr - entry) * shares) if shares else 0
     total_pnl = round2(realized_pnl + unrealized_pnl)
 
-    if entry and shares:
-        position_value = round2(curr * shares)
-        cost_value = round2(entry * shares)
-    else:
-        position_value = 0
-        cost_value = 0
+    position_value = round2(curr * shares) if shares else 0
+    cost_value = round2(entry * shares) if shares else 0
 
     candle = analyze_candle_pattern(df)
 
@@ -1828,6 +1842,189 @@ def calc_holding_management(track, df):
 
 
 # =====================================================
+# 交易績效統計
+# =====================================================
+def trade_return_value(log):
+    total = safe_float(log.get("total_pnl"), None)
+    if total is not None and total != 0:
+        return total
+
+    pnl_pct = safe_float(log.get("pnl_pct"), 0)
+    entry = safe_float(log.get("entry_price"), 0)
+    shares = safe_int(log.get("shares"), 0)
+
+    if entry and shares:
+        return round2(entry * shares * pnl_pct / 100)
+
+    return pnl_pct
+
+
+def calc_group_stats(logs, key_name):
+    group_map = {}
+
+    for log in logs:
+        key = log.get(key_name) or "未分類"
+        group_map.setdefault(key, []).append(log)
+
+    rows = []
+
+    for key, arr in group_map.items():
+        returns = [trade_return_value(x) for x in arr]
+        pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in arr]
+
+        wins = [r for r in returns if r > 0]
+        losses = [r for r in returns if r < 0]
+
+        count = len(arr)
+        winrate = round2(len(wins) / count * 100) if count else 0
+
+        avg_return = round2(sum(pct_returns) / count) if count else 0
+        total_pnl = round2(sum(returns))
+
+        avg_win = round2(sum(wins) / len(wins)) if wins else 0
+        avg_loss = round2(sum(losses) / len(losses)) if losses else 0
+
+        if avg_loss != 0:
+            payoff_ratio = round2(abs(avg_win / avg_loss))
+        else:
+            payoff_ratio = 0
+
+        expectancy = round2(total_pnl / count) if count else 0
+
+        if count < 3:
+            ai_comment = "樣本不足，先觀察"
+            ai_level = "neutral"
+        elif winrate >= 60 and total_pnl > 0 and avg_return > 0:
+            ai_comment = "表現良好，可保留或提高權重"
+            ai_level = "good"
+        elif winrate < 40 and total_pnl < 0:
+            ai_comment = "表現偏弱，建議降權或提高門檻"
+            ai_level = "bad"
+        elif total_pnl > 0:
+            ai_comment = "有獲利能力，但仍需觀察穩定性"
+            ai_level = "normal"
+        else:
+            ai_comment = "效果普通，建議保守使用"
+            ai_level = "warning"
+
+        rows.append({
+            "name": key,
+            "count": count,
+            "winrate": winrate,
+            "avg_return": avg_return,
+            "total_pnl": total_pnl,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "payoff_ratio": payoff_ratio,
+            "expectancy": expectancy,
+            "ai_comment": ai_comment,
+            "ai_level": ai_level
+        })
+
+    rows = sorted(rows, key=lambda x: (x["total_pnl"], x["winrate"], x["count"]), reverse=True)
+    return rows
+
+
+def calc_strategy_dashboard(logs):
+    if not logs:
+        return {
+            "total_count": 0,
+            "winrate": 0,
+            "total_pnl": 0,
+            "avg_return": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "payoff_ratio": 0,
+            "best_trade": "-",
+            "worst_trade": "-",
+            "avg_hold_days": 0,
+            "by_buy_type": [],
+            "by_sector": [],
+            "by_level": [],
+            "by_risk_reward": [],
+            "by_market": [],
+            "by_leader": [],
+            "ai_summary": "目前尚無結案交易，先累積樣本。"
+        }
+
+    returns = [trade_return_value(x) for x in logs]
+    pct_returns = [safe_float(x.get("pnl_pct"), 0) for x in logs]
+
+    wins = [r for r in returns if r > 0]
+    losses = [r for r in returns if r < 0]
+
+    count = len(logs)
+    winrate = round2(len(wins) / count * 100)
+    total_pnl = round2(sum(returns))
+    avg_return = round2(sum(pct_returns) / count)
+
+    avg_win = round2(sum(wins) / len(wins)) if wins else 0
+    avg_loss = round2(sum(losses) / len(losses)) if losses else 0
+
+    if avg_loss != 0:
+        payoff_ratio = round2(abs(avg_win / avg_loss))
+    else:
+        payoff_ratio = 0
+
+    best = max(logs, key=lambda x: trade_return_value(x))
+    worst = min(logs, key=lambda x: trade_return_value(x))
+
+    hold_days = [
+        days_between(x.get("entry_date", ""), x.get("exit_date", ""))
+        for x in logs
+    ]
+    avg_hold_days = round2(sum(hold_days) / len(hold_days)) if hold_days else 0
+
+    by_buy_type = calc_group_stats(logs, "buy_type")
+    by_sector = calc_group_stats(logs, "sector")
+    by_level = calc_group_stats(logs, "level")
+    by_risk_reward = calc_group_stats(logs, "risk_reward_group")
+    by_market = calc_group_stats(logs, "market_status")
+    by_leader = calc_group_stats(logs, "leader_status")
+
+    ai_notes = []
+
+    if winrate >= 55 and total_pnl > 0:
+        ai_notes.append("整體策略目前為正向，可持續累積樣本。")
+    elif total_pnl < 0:
+        ai_notes.append("整體績效目前偏弱，建議降低部位並檢查失敗類型。")
+    else:
+        ai_notes.append("整體樣本仍需累積，先不要過度調整策略。")
+
+    if by_buy_type:
+        best_type = by_buy_type[0]
+        ai_notes.append(f"目前表現較佳的買點為「{best_type['name']}」，勝率 {best_type['winrate']}%，總損益 {best_type['total_pnl']}。")
+
+    bad_types = [x for x in by_buy_type if x["count"] >= 3 and x["total_pnl"] < 0 and x["winrate"] < 40]
+    if bad_types:
+        ai_notes.append(f"「{bad_types[0]['name']}」表現偏弱，建議降權或提高進場門檻。")
+
+    rr_bad = [x for x in by_risk_reward if "低於1.5" in x["name"] and x["count"] > 0 and x["total_pnl"] <= 0]
+    if rr_bad:
+        ai_notes.append("風報比低於1.5的交易不理想，建議維持不列入進場提醒。")
+
+    return {
+        "total_count": count,
+        "winrate": winrate,
+        "total_pnl": total_pnl,
+        "avg_return": avg_return,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "payoff_ratio": payoff_ratio,
+        "best_trade": f"{best.get('name', '-')} / {trade_return_value(best)}",
+        "worst_trade": f"{worst.get('name', '-')} / {trade_return_value(worst)}",
+        "avg_hold_days": avg_hold_days,
+        "by_buy_type": by_buy_type,
+        "by_sector": by_sector,
+        "by_level": by_level,
+        "by_risk_reward": by_risk_reward,
+        "by_market": by_market,
+        "by_leader": by_leader,
+        "ai_summary": " ".join(ai_notes)
+    }
+
+
+# =====================================================
 # 檔案讀寫
 # =====================================================
 def load_track():
@@ -1840,7 +2037,17 @@ def save_track(data):
 
 
 def load_trade_log():
-    return read_json_file(TRADE_LOG_FILE, [])
+    logs = read_json_file(TRADE_LOG_FILE, [])
+
+    for log in logs:
+        if "risk_reward_group" not in log:
+            log["risk_reward_group"] = get_risk_reward_group(log.get("risk_reward", 0))
+        if "market_status" not in log:
+            log["market_status"] = "未記錄"
+        if "leader_status" not in log:
+            log["leader_status"] = "未記錄"
+
+    return logs
 
 
 def save_trade_log(data):
@@ -1962,6 +2169,7 @@ def scan_market():
         item.update(leader_data)
         item["sector_rank"] = sector_rank_map.get(item["sector"], 999)
         item["combined_sector_score"] = combined_sector_score_map.get(item["sector"], item.get("sector_score", 0))
+        item["market_status"] = market_info.get("market_status", "-")
 
         top_down_bonus = (
             item.get("combined_sector_score", 0) +
@@ -2055,6 +2263,7 @@ def index():
     save_track(updated_tracks)
 
     winrate, avg = calc_track_stats(updated_tracks)
+    strategy_dashboard = calc_strategy_dashboard(trade_logs)
 
     return render_template(
         "index.html",
@@ -2088,6 +2297,7 @@ def index():
 
         tracks=updated_tracks,
         trade_logs=trade_logs[-10:],
+        strategy_dashboard=strategy_dashboard,
         winrate=winrate,
         avg=avg,
         account_size=ACCOUNT_SIZE,
@@ -2174,6 +2384,10 @@ def track(symbol):
         "practical_stop": safe_float(item.get("practical_stop")),
         "initial_stop": safe_float(item.get("practical_stop")) or safe_float(item.get("initial_stop")),
         "risk_reward": safe_float(item.get("risk_reward")),
+        "risk_reward_group": item.get("risk_reward_group", get_risk_reward_group(item.get("risk_reward", 0))),
+        "sector_status": item.get("sector_status", "-"),
+        "leader_status": item.get("leader_status", "-"),
+        "market_status": item.get("market_status", "-"),
         "date": today_str(),
         "ai_holding_status": "剛加入追蹤",
         "ai_exit_notice": "等待隔日開盤與支撐確認。",
@@ -2335,6 +2549,11 @@ def close_trade(symbol):
         "level": item.get("level"),
         "buy_type": item.get("buy_type"),
         "sector": item.get("sector"),
+        "risk_reward": item.get("risk_reward", 0),
+        "risk_reward_group": item.get("risk_reward_group", get_risk_reward_group(item.get("risk_reward", 0))),
+        "market_status": item.get("market_status", "未記錄"),
+        "sector_status": item.get("sector_status", "未記錄"),
+        "leader_status": item.get("leader_status", "未記錄"),
         "note": item.get("note", ""),
         "trade_actions": item.get("trade_actions", []),
         "ai_holding_status": item.get("ai_holding_status"),
