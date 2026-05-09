@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>AI選股 + AI交易計畫 + AI持股管理系統</title>
+<title>AI實戰交易管理 + Top-Down法人選股系統</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -31,10 +31,6 @@ body {
     box-shadow: 0 0 18px rgba(0,0,0,0.35);
 }
 
-.card:hover {
-    border-color: #38bdf8;
-}
-
 h2, h4, h5 {
     color: #ffffff;
 }
@@ -51,12 +47,6 @@ hr {
 .small-text {
     font-size: 13px;
     color: #cbd5e1;
-}
-
-.score {
-    font-size: 32px;
-    font-weight: 900;
-    color: #facc15;
 }
 
 .good {
@@ -134,15 +124,9 @@ hr {
     font-weight: 900;
 }
 
-.badge-wait {
-    background: #f59e0b;
-    color: #111827;
-    font-weight: 900;
-}
-
-.badge-watch {
-    background: #334155;
-    color: #e2e8f0;
+.badge-topdown {
+    background: #7c3aed;
+    color: #ede9fe;
     font-weight: 900;
 }
 
@@ -213,6 +197,12 @@ hr {
     color: #94a3b8;
     font-size: 13px;
 }
+
+.input-dark {
+    background: #0f172a;
+    border: 1px solid #475569;
+    color: #e5e7eb;
+}
 </style>
 </head>
 
@@ -220,14 +210,15 @@ hr {
 
 <div class="container py-4">
 
-<h2>💰 AI選股 + AI交易計畫 + AI持股管理系統</h2>
+<h2>💰 AI實戰交易管理 + Top-Down法人選股系統</h2>
 
 <div class="top-summary mt-3">
     <div class="info-line">🕒 網站時間：{{ now }}</div>
     <div class="info-line">📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
 
     <div class="info-line">
-        🌍 大盤狀態：{{ market_status }} ｜ 大盤分數：{{ market_score }} ｜ 操作模式：{{ risk_mode }} ｜
+        🌍 大盤狀態：{{ market_status }} ｜ 大盤位階：{{ market_egg_zone }} ｜ 前方壓力：{{ market_pressure_note }} ｜
+        操作模式：{{ risk_mode }} ｜
         風險開關：
         {% if allow_new_positions %}
             <span class="risk-on">{{ risk_switch }}</span>
@@ -239,7 +230,8 @@ hr {
 
     <div class="info-line">
         📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜
-        今日進場提醒：{{ entry_alerts|length }} 檔 ｜ 已追蹤：{{ tracks|length }} 檔 ｜ AI候選：{{ candidate_count }} 檔
+        今日進場提醒：{{ entry_alerts|length }} 檔 ｜ 已追蹤：{{ tracks|length }} 檔 ｜ AI候選：{{ candidate_count }} 檔 ｜
+        S級：{{ s_count }} ｜ A級：{{ a_count }}
     </div>
 </div>
 
@@ -274,6 +266,7 @@ hr {
 
         <div>目前價格：<span class="big-price">{{ t.curr }}</span></div>
         <div>進場成本：{{ t.price }}</div>
+        <div>持股股數：{{ t.shares }}</div>
 
         <div>
             目前損益：
@@ -314,6 +307,8 @@ hr {
             若跌破 {{ t.loose_trail }}：{{ t.loose_action }}
         </div>
 
+        <div class="mt-2 warning">分批出場建議：{{ t.scale_out_note }}</div>
+
         <hr>
 
         <div>實戰停損價：<span class="bad">{{ t.practical_stop }}</span></div>
@@ -346,13 +341,13 @@ hr {
 </div>
 {% else %}
 <div class="alert alert-secondary">
-目前沒有加入追蹤的股票。進場提醒出現後，按「加入追蹤」，AI會開始管理移動風控、實戰停損、支撐、滿足點。
+目前沒有加入追蹤的股票。進場提醒出現後，可輸入實際成交價與股數，讓AI開始管理移動風控、實戰停損、支撐與滿足點。
 </div>
 {% endif %}
 
 <hr>
 
-<h4 class="section-title">🚨 今日進場提醒｜AI交易計畫</h4>
+<h4 class="section-title">🚨 今日進場提醒｜Top-Down AI交易計畫</h4>
 
 {% if entry_alerts %}
 <div class="row">
@@ -361,6 +356,7 @@ hr {
     <div class="plan-card">
 
         <span class="badge badge-entry mb-2">AI進場提醒</span>
+        <span class="badge badge-topdown mb-2">Top-Down通過</span>
 
         <div class="plan-title">{{ a.name }}</div>
         <div class="small-text mb-2">{{ a.symbol }} ｜ {{ a.sector }} ｜ {{ a.level }}</div>
@@ -369,52 +365,72 @@ hr {
 
         <div class="label">明日開盤建議進場區間</div>
         <div class="big-price">{{ a.next_entry_low }} ～ {{ a.next_entry_high }}</div>
-        <div class="small-text mb-3">
-            開盤若站在此區間內，代表支撐未破且未開太高，可考慮第一筆試單。
-        </div>
 
-        <div class="label">明日開盤跌破不進場點位</div>
+        <div class="label mt-3">明日開盤跌破不進場點位</div>
         <div class="big-price bad">{{ a.no_entry_price }}</div>
-        <div class="small-text mb-3">
-            明日若開盤跌破此價位，不建議進場，等待重新站回支撐。
-        </div>
 
-        <div class="label">實戰停損價</div>
+        <div class="label mt-3">實戰停損價</div>
         <div class="big-price bad">{{ a.practical_stop }}</div>
-        <div class="small-text mb-3">
-            這是實際風控停損點，避免停損抓太遠造成賺少賠多。
-        </div>
 
-        <div class="label">假突破失效價</div>
+        <div class="label mt-3">假突破失效價</div>
         <div class="big-price bad">{{ a.invalid_price }}</div>
-        <div class="small-text mb-3">
-            此價位作為候選失效參考，不建議直接當主要實戰停損。
-        </div>
 
         <hr>
 
-        <div>目前狀態：<span class="good">{{ a.current_status }}</span></div>
-        <div>買點型態：<span class="warning">{{ a.buy_type }}</span></div>
-        <div>支撐點：<span class="blue">{{ a.support_price }}</span></div>
-        <div>風報比：<span class="blue">{{ a.risk_reward }}</span></div>
+        <div>風報比：<span class="blue">{{ a.risk_reward }}</span> ｜ {{ a.risk_reward_note }}</div>
+        <div>目標價：<span class="warning">{{ a.target_price }}</span></div>
         <div>AI建議：<span class="warning">{{ a.ai_next_action }}</span></div>
 
-        <div class="small-text mt-2">{{ a.trade_plan_note }}</div>
+        <hr>
 
-        <a href="/track/{{ a.symbol }}" class="btn btn-warning mt-3 w-100">加入追蹤</a>
+        <div class="label">Top-Down 判斷</div>
+        <div>族群狀態：<span class="blue">{{ a.sector_status }}</span></div>
+        <div>龍頭狀態：<span class="warning">{{ a.leader_status }}</span></div>
+        <div>龍頭參考：{{ a.leader_names }}</div>
+        <div>買點型態：<span class="warning">{{ a.buy_type }}</span></div>
+        <div>突破狀態：{{ a.breakout_state }}</div>
+
+        <hr>
+
+        <div class="label">支撐壓力區</div>
+        <div>前高K棒壓力區：<span class="warning">{{ a.resistance_low }} ～ {{ a.resistance_high }}</span></div>
+        <div>盤整區間：<span class="blue">{{ a.box_low }} ～ {{ a.box_high }}</span></div>
+        <div>支撐點：<span class="blue">{{ a.support_price }}</span></div>
+
+        <hr>
+
+        <div class="label">分批進場計畫</div>
+        <div>第一筆：30%</div>
+        <div>第二筆：30% ｜ 參考價 {{ a.next_entry_high }}</div>
+        <div>第三筆：40% ｜ 參考價 {{ a.target_price }}</div>
+
+        <hr>
+
+        <form method="post" action="/track/{{ a.symbol }}">
+            <div class="mb-2">
+                <label class="small-text">實際成交價，可空白</label>
+                <input name="actual_price" class="form-control form-control-sm input-dark" placeholder="例如 133.9">
+            </div>
+            <div class="mb-2">
+                <label class="small-text">實際股數，可空白</label>
+                <input name="shares" class="form-control form-control-sm input-dark" placeholder="例如 1000">
+            </div>
+            <button type="submit" class="btn btn-warning mt-2 w-100">加入追蹤</button>
+        </form>
+
     </div>
 </div>
 {% endfor %}
 </div>
 {% else %}
 <div class="alert alert-secondary">
-目前沒有進場提醒。符合策略的股票會先自動進入 AI候選觀察池，等達到進場條件後才會跳到這裡。
+目前沒有進場提醒。符合策略的股票會先自動進入 AI候選觀察池，等大盤、族群、龍頭、個股與風報比條件成熟後，才會跳到這裡。
 </div>
 {% endif %}
 
 <hr>
 
-<h4 class="section-title">🔥 族群輪動排行榜</h4>
+<h4 class="section-title">🔥 族群輪動排行榜｜含龍頭強度</h4>
 
 {% if sector_rankings %}
 <div class="table-responsive">
@@ -423,7 +439,10 @@ hr {
 <tr>
 <th>排名</th>
 <th>族群</th>
-<th>族群分</th>
+<th>綜合分</th>
+<th>族群狀態</th>
+<th>龍頭狀態</th>
+<th>龍頭參考</th>
 <th>5日均漲幅</th>
 <th>20日均漲幅</th>
 <th>主力均分</th>
@@ -436,7 +455,10 @@ hr {
 <tr>
 <td class="warning">{{ s.rank }}</td>
 <td>{{ s.sector }}</td>
-<td>{{ s.sector_score }}</td>
+<td>{{ s.combined_sector_score }}</td>
+<td>{{ s.sector_status }}</td>
+<td>{{ s.leader_status }}</td>
+<td>{{ s.leader_names }}</td>
 <td>{{ s.sector_avg_5d }}%</td>
 <td>{{ s.sector_avg_20d }}%</td>
 <td>{{ s.sector_avg_main }}</td>
@@ -456,7 +478,7 @@ hr {
 <h4 class="section-title">📌 AI候選觀察池｜自動追蹤中</h4>
 
 <div class="mobile-note mb-2">
-這裡只是候選觀察，不代表明天可進場；等條件成熟後，系統會自動跳到上方「今日進場提醒｜AI交易計畫」。
+這裡只是候選觀察，不代表明天可進場；等大盤、族群、龍頭、個股買點與風報比條件成熟後，才會自動跳到上方「今日進場提醒」。
 </div>
 
 {% if candidate_pool %}
@@ -467,14 +489,17 @@ hr {
 <th>股票</th>
 <th>等級</th>
 <th>族群</th>
-<th>前狀態</th>
+<th>族群狀態</th>
+<th>龍頭狀態</th>
 <th>目前狀態</th>
 <th>買點</th>
 <th>分數</th>
-<th>明日進場區間</th>
-<th>跌破不進場</th>
+<th>進場區間</th>
+<th>跌破不進</th>
 <th>實戰停損</th>
-<th>支撐點</th>
+<th>風報比</th>
+<th>壓力區</th>
+<th>盤整區</th>
 <th>AI建議</th>
 <th>操作</th>
 </tr>
@@ -485,7 +510,8 @@ hr {
 <td>{{ c.name }}<br><span class="small-text">{{ c.symbol }}</span></td>
 <td>{{ c.level }}</td>
 <td>{{ c.sector }}</td>
-<td>{{ c.previous_status }}</td>
+<td>{{ c.sector_status }}</td>
+<td>{{ c.leader_status }}</td>
 <td>
 {% if c.current_status == "可觀察進場" %}
 <span class="good">{{ c.current_status }}</span>
@@ -498,9 +524,17 @@ hr {
 <td><span class="warning">{{ c.next_entry_low }} ～ {{ c.next_entry_high }}</span></td>
 <td><span class="bad">{{ c.no_entry_price }}</span></td>
 <td><span class="bad">{{ c.practical_stop }}</span></td>
-<td>{{ c.support_price }}</td>
+<td>{{ c.risk_reward }}</td>
+<td>{{ c.resistance_low }}～{{ c.resistance_high }}</td>
+<td>{{ c.box_low }}～{{ c.box_high }}</td>
 <td>{{ c.ai_next_action }}</td>
-<td><a href="/track/{{ c.symbol }}" class="btn btn-warning btn-sm">追蹤</a></td>
+<td>
+    <form method="post" action="/track/{{ c.symbol }}">
+        <input name="actual_price" class="form-control form-control-sm input-dark mb-1" placeholder="成交價">
+        <input name="shares" class="form-control form-control-sm input-dark mb-1" placeholder="股數">
+        <button type="submit" class="btn btn-warning btn-sm w-100">追蹤</button>
+    </form>
+</td>
 </tr>
 {% endfor %}
 </tbody>
@@ -522,6 +556,7 @@ hr {
 <th>股票</th>
 <th>進場</th>
 <th>出場</th>
+<th>股數</th>
 <th>損益</th>
 <th>等級</th>
 <th>買點</th>
@@ -537,6 +572,7 @@ hr {
 <td>{{ t.name }}<br><span class="small-text">{{ t.symbol }}</span></td>
 <td>{{ t.entry_price }}</td>
 <td>{{ t.exit_price }}</td>
+<td>{{ t.shares }}</td>
 <td>
 {% if t.pnl_pct is number and t.pnl_pct > 0 %}
 <span class="good">{{ t.pnl_pct }}%</span>
@@ -564,7 +600,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已將「已加入追蹤｜AI持股管理」移到最上方，方便優先監控接近實際持股的標的。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版整合：Top-Down法人選股、大盤位階、族群狀態、龍頭強度、前高K棒壓力區、盤整區間、實際成交價、風報比過濾、分批進出場與AI持股管理。
 </div>
 
 </div>
