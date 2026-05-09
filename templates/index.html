@@ -259,68 +259,6 @@ hr {
 
 <hr>
 
-<h4 class="section-title">🚨 今日進場提醒｜AI交易計畫</h4>
-
-{% if entry_alerts %}
-<div class="row">
-{% for a in entry_alerts %}
-<div class="col-lg-4 col-md-6 mb-3">
-    <div class="plan-card">
-
-        <span class="badge badge-entry mb-2">AI進場提醒</span>
-
-        <div class="plan-title">{{ a.name }}</div>
-        <div class="small-text mb-2">{{ a.symbol }} ｜ {{ a.sector }} ｜ {{ a.level }}</div>
-
-        <hr>
-
-        <div class="label">明日開盤建議進場區間</div>
-        <div class="big-price">{{ a.next_entry_low }} ～ {{ a.next_entry_high }}</div>
-        <div class="small-text mb-3">
-            開盤若站在此區間內，代表支撐未破且未開太高，可考慮第一筆試單。
-        </div>
-
-        <div class="label">明日開盤跌破不進場點位</div>
-        <div class="big-price bad">{{ a.no_entry_price }}</div>
-        <div class="small-text mb-3">
-            明日若開盤跌破此價位，不建議進場，等待重新站回支撐。
-        </div>
-
-        <div class="label">實戰停損價</div>
-        <div class="big-price bad">{{ a.practical_stop }}</div>
-        <div class="small-text mb-3">
-            這是實際風控停損點，避免停損抓太遠造成賺少賠多。
-        </div>
-
-        <div class="label">假突破失效價</div>
-        <div class="big-price bad">{{ a.invalid_price }}</div>
-        <div class="small-text mb-3">
-            此價位作為候選失效參考，不建議直接當主要實戰停損。
-        </div>
-
-        <hr>
-
-        <div>目前狀態：<span class="good">{{ a.current_status }}</span></div>
-        <div>買點型態：<span class="warning">{{ a.buy_type }}</span></div>
-        <div>支撐點：<span class="blue">{{ a.support_price }}</span></div>
-        <div>風報比：<span class="blue">{{ a.risk_reward }}</span></div>
-        <div>AI建議：<span class="warning">{{ a.ai_next_action }}</span></div>
-
-        <div class="small-text mt-2">{{ a.trade_plan_note }}</div>
-
-        <a href="/track/{{ a.symbol }}" class="btn btn-warning mt-3 w-100">加入追蹤</a>
-    </div>
-</div>
-{% endfor %}
-</div>
-{% else %}
-<div class="alert alert-secondary">
-目前沒有進場提醒。符合策略的股票會先自動進入 AI候選觀察池，等達到進場條件後才會跳到這裡。
-</div>
-{% endif %}
-
-<hr>
-
 <h4 class="section-title">📌 已加入追蹤｜AI持股管理</h4>
 
 {% if tracks %}
@@ -409,6 +347,68 @@ hr {
 {% else %}
 <div class="alert alert-secondary">
 目前沒有加入追蹤的股票。進場提醒出現後，按「加入追蹤」，AI會開始管理移動風控、實戰停損、支撐、滿足點。
+</div>
+{% endif %}
+
+<hr>
+
+<h4 class="section-title">🚨 今日進場提醒｜AI交易計畫</h4>
+
+{% if entry_alerts %}
+<div class="row">
+{% for a in entry_alerts %}
+<div class="col-lg-4 col-md-6 mb-3">
+    <div class="plan-card">
+
+        <span class="badge badge-entry mb-2">AI進場提醒</span>
+
+        <div class="plan-title">{{ a.name }}</div>
+        <div class="small-text mb-2">{{ a.symbol }} ｜ {{ a.sector }} ｜ {{ a.level }}</div>
+
+        <hr>
+
+        <div class="label">明日開盤建議進場區間</div>
+        <div class="big-price">{{ a.next_entry_low }} ～ {{ a.next_entry_high }}</div>
+        <div class="small-text mb-3">
+            開盤若站在此區間內，代表支撐未破且未開太高，可考慮第一筆試單。
+        </div>
+
+        <div class="label">明日開盤跌破不進場點位</div>
+        <div class="big-price bad">{{ a.no_entry_price }}</div>
+        <div class="small-text mb-3">
+            明日若開盤跌破此價位，不建議進場，等待重新站回支撐。
+        </div>
+
+        <div class="label">實戰停損價</div>
+        <div class="big-price bad">{{ a.practical_stop }}</div>
+        <div class="small-text mb-3">
+            這是實際風控停損點，避免停損抓太遠造成賺少賠多。
+        </div>
+
+        <div class="label">假突破失效價</div>
+        <div class="big-price bad">{{ a.invalid_price }}</div>
+        <div class="small-text mb-3">
+            此價位作為候選失效參考，不建議直接當主要實戰停損。
+        </div>
+
+        <hr>
+
+        <div>目前狀態：<span class="good">{{ a.current_status }}</span></div>
+        <div>買點型態：<span class="warning">{{ a.buy_type }}</span></div>
+        <div>支撐點：<span class="blue">{{ a.support_price }}</span></div>
+        <div>風報比：<span class="blue">{{ a.risk_reward }}</span></div>
+        <div>AI建議：<span class="warning">{{ a.ai_next_action }}</span></div>
+
+        <div class="small-text mt-2">{{ a.trade_plan_note }}</div>
+
+        <a href="/track/{{ a.symbol }}" class="btn btn-warning mt-3 w-100">加入追蹤</a>
+    </div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="alert alert-secondary">
+目前沒有進場提醒。符合策略的股票會先自動進入 AI候選觀察池，等達到進場條件後才會跳到這裡。
 </div>
 {% endif %}
 
@@ -564,7 +564,7 @@ hr {
 <hr>
 
 <div class="small-text mb-4">
-⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已修正：AI移動風控區會依成本自動判斷為移動停利或移動停損，並新增實戰停損價，避免停損抓太遠造成賺少賠多。
+⚠️ 本系統僅供研究與模擬交易使用，不保證獲利。此版已將「已加入追蹤｜AI持股管理」移到最上方，方便優先監控接近實際持股的標的。
 </div>
 
 </div>
