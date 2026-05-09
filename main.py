@@ -882,6 +882,264 @@ def update_candidate_pool(items):
     return data
 
 
+
+# =====================================================
+# LINE 推播通知：Webhook + 測試推播 + 自動排程
+# =====================================================
+def get_line_token():
+    return os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+
+
+def get_line_user_id():
+    env_user_id = os.getenv("LINE_USER_ID", "").strip()
+    if env_user_id:
+        return env_user_id
+    data = read_json(LINE_USER_FILE, {})
+    return data.get("user_id", "").strip()
+
+
+def save_line_user_id(user_id):
+    if user_id:
+        write_json(LINE_USER_FILE, {
+            "user_id": user_id,
+            "updated_at": taiwan_now()
+        })
+
+
+def line_enabled():
+    return bool(get_line_token()) and bool(get_line_user_id())
+
+
+def push_line_message(message):
+    token = get_line_token()
+    user_id = get_line_user_id()
+
+    if not token:
+        return False, "尚未設定 LINE_CHANNEL_ACCESS_TOKEN"
+
+    if not user_id:
+        return False, "尚未取得 LINE User ID。請先設定 Webhook，並用你的 LINE 傳訊息給官方帳號。"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "to": user_id,
+        "messages": [
+            {
+                "type": "text",
+                "text": str(message)[:4900]
+            }
+        ]
+    }
+
+    try:
+        r = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers=headers,
+            json=payload,
+            timeout=15
+        )
+
+        if r.status_code in [200, 202]:
+            return True, "LINE通知已送出"
+
+        return False, f"LINE通知失敗：HTTP {r.status_code} {r.text[:300]}"
+
+    except Exception as e:
+        return False, f"LINE通知例外：{e}"
+
+
+def short_symbol(symbol):
+    return str(symbol).replace(".TW", "").replace(".TWO", "")
+
+
+def format_line_holding_status():
+    tracks = load_track()
+
+    if not tracks:
+        return "📌 AI持股狀態\n目前沒有追蹤中的持股。"
+
+    rows = ["📌 AI持股狀態"]
+
+    for t in tracks:
+        try:
+            df = download_stock(t["symbol"], "1y")
+            t = manage_holding(t, df)
+        except Exception:
+            pass
+
+        name = t.get("name", "-")
+        symbol = short_symbol(t.get("symbol", ""))
+        curr = t.get("curr", "-")
+        cost = t.get("price", "-")
+        pnl = t.get("pnl", "-")
+        status = t.get("ai_holding_status", "-")
+        notice = t.get("ai_exit_notice", "-")
+        trail = t.get("trail_range", "-")
+        support = t.get("support_price", "-")
+        stop = t.get("practical_stop", "-")
+
+        if status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"]:
+            action = "🚨 建議減碼或出場"
+        elif status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"]:
+            action = "⚠️ 注意停利或減碼"
+        else:
+            action = "✅ 繼續持有"
+
+        rows.append(
+            f"\n{name} {symbol}\n"
+            f"現價：{curr}\n"
+            f"成本：{cost}\n"
+            f"損益：{pnl}%\n"
+            f"狀態：{status}\n"
+            f"判斷：{action}\n"
+            f"移動風控：{trail}\n"
+            f"支撐/停損：{support} / {stop}\n"
+            f"AI：{notice}"
+        )
+
+    return "\n".join(rows)
+
+
+def format_line_entry_alerts():
+    scan = load_scan_results()
+    alerts = scan.get("entry_alerts", [])
+
+    if not alerts:
+        return (
+            "🚀 AI進場提醒\n"
+            "目前沒有符合進場條件的股票。\n"
+            "符合策略的股票會先進入候選池，等待回採、轉強、風報比與開盤條件成熟。"
+        )
+
+    rows = ["🚀 AI進場提醒"]
+
+    for a in alerts[:5]:
+        name = a.get("name", "-")
+        symbol = short_symbol(a.get("symbol", ""))
+        buy_type = a.get("buy_type", "-")
+        entry_low = a.get("next_entry_low", "-")
+        entry_high = a.get("next_entry_high", "-")
+        no_entry = a.get("no_entry_price", "-")
+        stop = a.get("practical_stop", "-")
+        rr = a.get("risk_reward", "-")
+        action = a.get("ai_next_action", "-")
+
+        rows.append(
+            f"\n{name} {symbol}\n"
+            f"買點：{buy_type}\n"
+            f"可進場：{entry_low} ～ {entry_high}\n"
+            f"跌破不進：{no_entry}\n"
+            f"開盤超過不追：{entry_high}\n"
+            f"停損：{stop}\n"
+            f"風報比：{rr}\n"
+            f"AI：{action}"
+        )
+
+    return "\n".join(rows)
+
+
+def format_line_daily_review():
+    scan = load_scan_results()
+    tracks = load_track()
+    sectors = scan.get("sector_rankings", [])
+    top_sectors = "、".join([x.get("sector", "-") for x in sectors[:3]]) if sectors else "無資料"
+
+    return (
+        "📊 AI盤後檢討\n"
+        f"大盤：{scan.get('market_status', '-')}\n"
+        f"操作模式：{scan.get('risk_mode', '-')}\n"
+        f"風險開關：{scan.get('risk_switch', '-')}\n"
+        f"股票池：{scan.get('stock_pool_count', 0)} 檔\n"
+        f"今日進場提醒：{len(scan.get('entry_alerts', []))} 檔\n"
+        f"AI候選：{scan.get('candidate_count', 0)} 檔\n"
+        f"已追蹤持股：{len(tracks)} 檔\n"
+        f"主流族群：{top_sectors}\n"
+        f"掃描時間：{scan.get('updated_at', '-')}"
+    )
+
+
+def format_line_message(mode="all"):
+    if mode == "holding":
+        return format_line_holding_status()
+    if mode == "entry":
+        return format_line_entry_alerts()
+    if mode == "review":
+        return format_line_daily_review()
+
+    return (
+        format_line_holding_status()
+        + "\n\n----------------\n\n"
+        + format_line_entry_alerts()
+    )
+
+
+def send_line_notification(mode="all"):
+    ok, info = push_line_message(format_line_message(mode))
+
+    logs = read_json(LINE_NOTIFY_LOG_FILE, [])
+    logs.append({
+        "mode": mode,
+        "ok": ok,
+        "info": info,
+        "time": taiwan_now()
+    })
+    write_json(LINE_NOTIFY_LOG_FILE, logs[-50:])
+
+    return ok, info
+
+
+@app.route("/callback", methods=["GET", "POST"])
+def line_callback():
+    # 用瀏覽器打開 /callback 會看到這行，代表路由已存在。
+    # LINE Verify 會用 POST，所以也支援 POST。
+    if request.method == "GET":
+        return "LINE callback ready", 200
+
+    data = request.get_json(silent=True) or {}
+    events = data.get("events", [])
+
+    for event in events:
+        source = event.get("source", {})
+        user_id = source.get("userId")
+
+        if user_id:
+            save_line_user_id(user_id)
+            push_line_message(
+                "✅ AI選股通知已綁定成功\n"
+                "之後系統會推播：\n"
+                "1. 目前追蹤持股狀態\n"
+                "2. 推薦進場股票與價格區間"
+            )
+
+    return "OK", 200
+
+
+@app.route("/line-test")
+def line_test():
+    ok, info = send_line_notification("all")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+@app.route("/line-holding")
+def line_holding():
+    ok, info = send_line_notification("holding")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+@app.route("/line-entry")
+def line_entry():
+    ok, info = send_line_notification("entry")
+    save_scan_status("done" if ok else "error", info)
+    return redirect(url_for("index"))
+
+
+
 def load_track(): return read_json(TRACK_FILE, [])
 def save_track(data): write_json(TRACK_FILE, data)
 def load_trade_log(): return read_json(TRADE_LOG_FILE, [])
@@ -997,7 +1255,7 @@ def index():
     for t in tracks:
         updated.append(manage_holding(t, download_stock(t["symbol"],"1y")))
     save_track(updated); dash=strategy_dashboard(logs); feedback=scan.get("strategy_feedback") or strategy_feedback(logs)
-    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100))
+    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id())
 
 
 @app.route("/scan-now")
@@ -1092,10 +1350,10 @@ scheduler.add_job(scheduled_scan, trigger="cron", hour=16, minute=0, id="daily_m
 # 09:10 開盤後持股狀態
 # 13:20 收盤前風控提醒
 # 16:05 盤後持股狀態 + 進場提醒
+
 scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=9, minute=10, id="line_holding_0910", replace_existing=True)
 scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=13, minute=20, id="line_holding_1320", replace_existing=True)
 scheduler.add_job(lambda: send_line_notification("all"), trigger="cron", hour=16, minute=5, id="line_all_1605", replace_existing=True)
-
 scheduler.start()
 
 if __name__ == "__main__":
