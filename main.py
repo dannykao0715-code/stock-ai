@@ -25,7 +25,8 @@ TRADE_LOG_FILE = "trade_log.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 CANDIDATE_FILE = "candidate_pool.json"
-BLACKLIST_FILE = "blacklist.json"
+LINE_USER_FILE = "line_user.json"
+LINE_NOTIFY_LOG_FILE = "line_notify_log.json"
 
 FULL_MARKET_MIN_COUNT = 1700
 MAX_ENTRY_ALERTS = 8
@@ -50,6 +51,10 @@ def require_auth():
 
 @app.before_request
 def protect_site():
+    # LINE Webhook 不能被 Basic Auth 擋住，否則 LINE 無法把 User ID 傳進來
+    if request.path == "/callback":
+        return None
+
     auth = request.authorization
     if not auth or not check_auth(auth.username, auth.password):
         return require_auth()
@@ -707,191 +712,6 @@ def trade_plan(item):
     return {"support_price": round2(support), "next_entry_low": entry_low, "next_entry_high": entry_high, "no_entry_price": no_entry, "invalid_price": invalid, "practical_stop": stop, "initial_stop": stop, "target_price": target, "risk_reward": rr, "risk_reward_note": rr_note, "risk_reward_group": risk_reward_group(rr), "ai_next_action": action, "trade_plan_note": "依Top-Down、買點、風報比綜合判斷"}
 
 
-
-def trade_confidence(item, market):
-    """把所有交易條件壓成 0~100 的 AI信心分數。"""
-    score = 50
-    reasons = []
-
-    ms = market.get("market_status", "")
-    if "強多" in ms:
-        score += 12; reasons.append("大盤強多")
-    elif "多頭" in ms:
-        score += 8; reasons.append("大盤偏多")
-    elif "盤整偏多" in ms:
-        score += 3; reasons.append("大盤盤整偏多")
-    elif "轉弱" in ms or "禁止" in market.get("risk_mode", ""):
-        score -= 18; reasons.append("大盤風險偏高")
-
-    if item.get("sector_status") in ["主流多頭", "轉強族群"]:
-        score += 10; reasons.append("族群轉強")
-    if item.get("leader_status") in ["龍頭強勢帶動", "龍頭偏強"]:
-        score += 8; reasons.append("龍頭有帶動")
-    if item.get("sector_relative_status") in ["族群前三強", "族群前20%"]:
-        score += 8; reasons.append("族群內相對強勢")
-
-    if item.get("entry_status") == "可觀察進場":
-        score += 12; reasons.append("買點進入可觀察進場")
-    elif item.get("entry_status") in ["等回採", "等突破", "等轉強K"]:
-        score -= 5; reasons.append("買點尚未完全成熟")
-    elif item.get("entry_status") in ["跌破取消", "過熱不追", "不列入", "禁止新倉"]:
-        score -= 30; reasons.append("進場條件不合格")
-
-    if item.get("candle_score", 0) > 0:
-        score += 6; reasons.append("K棒偏多")
-    elif item.get("candle_score", 0) < 0:
-        score -= 8; reasons.append("K棒轉弱")
-
-    rr = safe_float(item.get("risk_reward"))
-    if rr >= 2.5:
-        score += 10; reasons.append("風報比優秀")
-    elif rr >= 2.0:
-        score += 7; reasons.append("風報比良好")
-    elif rr >= 1.5:
-        score += 3; reasons.append("風報比尚可")
-    else:
-        score -= 12; reasons.append("風報比不足")
-
-    if item.get("liquidity_level") in ["優", "佳"]:
-        score += 5; reasons.append("流動性佳")
-    elif item.get("liquidity_level") == "不足":
-        score -= 15; reasons.append("流動性不足")
-
-    if item.get("open_status") == "開盤跳高不追":
-        score -= 12; reasons.append("開盤有追高疑慮")
-    if item.get("execution_action") in ["可試單", "可小部位試單"]:
-        score += 6; reasons.append("執行條件允許試單")
-    elif item.get("execution_action") in ["取消候選", "暫停進場", "禁止新倉"]:
-        score -= 15; reasons.append("執行條件不佳")
-
-    score += safe_float(item.get("feedback_score")) * 0.4
-
-    score = int(max(0, min(100, round(score))))
-    if score >= 85:
-        level = "高信心"
-        action = "可依交易計畫試單"
-    elif score >= 70:
-        level = "中高信心"
-        action = "可小部位觀察"
-    elif score >= 55:
-        level = "中性觀察"
-        action = "等待更明確訊號"
-    else:
-        level = "低信心"
-        action = "只觀察，不急著進場"
-
-    return {
-        "confidence_score": score,
-        "confidence_level": level,
-        "confidence_action": action,
-        "confidence_reasons": reasons[:6]
-    }
-
-
-def scenario_plan(item):
-    return {
-        "strong_scenario": f"強勢劇本：開盤站上 {item.get('next_entry_low')}～{item.get('next_entry_high')}，量能放大且收盤不跌破支撐 {item.get('support_price')}，可續抱，浮盈後才考慮加碼。",
-        "normal_scenario": f"正常劇本：開盤或盤中在進場區附近震盪，但未跌破 {item.get('no_entry_price')}，可小部位試單並嚴守停損。",
-        "fail_scenario": f"失敗劇本：開盤或盤中跌破 {item.get('no_entry_price')}，不進場；若已進場則以 {item.get('practical_stop')} 作為實戰停損。"
-    }
-
-
-def discipline_warning(price, entry_low, entry_high, no_entry):
-    q = execution_quality(price, entry_low, entry_high, no_entry)
-    if q == "合理區間成交":
-        return "成交價位符合AI交易計畫。"
-    if q in ["追高執行", "買太高"]:
-        return "成交價高於AI建議上緣，屬於追高執行，建議降低部位或拉近停損。"
-    if q == "跌破支撐仍進場":
-        return "此筆交易違反原策略，跌破支撐仍進場，建議不要列入正式策略績效。"
-    if q == "低於建議區成交":
-        return "成交價低於建議區但未必是壞事，請確認是否仍站回支撐。"
-    return "尚無足夠成交資訊判斷紀律。"
-
-
-def load_blacklist():
-    return read_json(BLACKLIST_FILE, {"updated_at": "-", "symbols": {}})
-
-
-def save_blacklist(data):
-    write_json(BLACKLIST_FILE, data)
-
-
-def update_blacklist_from_logs(logs):
-    stats = {}
-    for x in logs:
-        sym = x.get("symbol")
-        if not sym:
-            continue
-        ft = x.get("failure_type", "")
-        if ft in ["成功交易", "獲利但回吐偏多", "未記錄"]:
-            continue
-        stats.setdefault(sym, {"count": 0, "failures": {}})
-        stats[sym]["count"] += 1
-        stats[sym]["failures"][ft] = stats[sym]["failures"].get(ft, 0) + 1
-    symbols = {}
-    for sym, row in stats.items():
-        if row["count"] >= 3:
-            main_fail = sorted(row["failures"].items(), key=lambda kv: kv[1], reverse=True)[0][0]
-            symbols[sym] = {"fail_count": row["count"], "main_failure": main_fail, "penalty": -25}
-    data = {"updated_at": taiwan_now(), "symbols": symbols}
-    save_blacklist(data)
-    return data
-
-
-def blacklist_adjustment(symbol):
-    row = load_blacklist().get("symbols", {}).get(symbol)
-    if not row:
-        return 0, ""
-    return safe_float(row.get("penalty", -25)), f"AI排除名單：近幾次主要失敗為 {row.get('main_failure','未分類')}，自動扣分。"
-
-
-def account_equity(logs, initial=ACCOUNT_SIZE):
-    equity = initial
-    curve = []
-    for x in sorted(logs, key=lambda r: str(r.get("exit_date", ""))):
-        pnl = trade_value(x)
-        equity += pnl
-        curve.append({"date": x.get("exit_date", "-"), "name": x.get("name", "-"), "pnl": round2(pnl), "equity": round2(equity)})
-    peak = initial
-    max_dd = 0
-    for c in curve:
-        peak = max(peak, c["equity"])
-        if peak:
-            max_dd = min(max_dd, (c["equity"] - peak) / peak * 100)
-    return {"initial": round2(initial), "current": round2(equity), "return_pct": round2((equity - initial) / initial * 100) if initial else 0, "max_drawdown_pct": round2(max_dd), "curve": curve[-10:]}
-
-
-def daily_report(scan, tracks):
-    sectors = scan.get("sector_rankings", [])[:3]
-    sector_names = "、".join([x.get("sector", "-") for x in sectors]) if sectors else "尚無明確主流族群"
-    need_exit = [t for t in tracks if t.get("ai_holding_status") in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控"]]
-    near_target = [t for t in tracks if "滿足點" in str(t.get("ai_holding_status", "")) or t.get("ai_holding_status") == "獲利回吐警戒"]
-    alerts = scan.get("entry_alerts", [])
-    return (
-        f"今日大盤狀態為「{scan.get('market_status','-')}」，操作模式「{scan.get('risk_mode','-')}」。"
-        f"目前主流族群參考：{sector_names}。"
-        f"今日進場提醒 {len(alerts)} 檔，已追蹤持股 {len(tracks)} 檔。"
-        f"需要優先處理的風控持股 {len(need_exit)} 檔，接近滿足點或獲利回吐警戒 {len(near_target)} 檔。"
-    )
-
-
-def build_focus_list(scan, tracks):
-    focus = []
-    for t in tracks:
-        st = t.get("ai_holding_status", "")
-        if st in ["實戰停損", "假突破失效", "支撐失守"]:
-            focus.append({"type": "停損/出場", "level": "red", "name": t.get("name"), "symbol": t.get("symbol"), "message": t.get("ai_exit_notice")})
-        elif st in ["跌破標準風控", "跌破保守風控", "獲利回吐警戒"]:
-            focus.append({"type": "減碼/提高警戒", "level": "yellow", "name": t.get("name"), "symbol": t.get("symbol"), "message": t.get("ai_exit_notice")})
-        elif "滿足點" in st:
-            focus.append({"type": "接近滿足點", "level": "yellow", "name": t.get("name"), "symbol": t.get("symbol"), "message": t.get("ai_exit_notice")})
-    for a in scan.get("entry_alerts", [])[:5]:
-        focus.append({"type": "可準備進場", "level": "green", "name": a.get("name"), "symbol": a.get("symbol"), "message": f"進場區 {a.get('next_entry_low')}～{a.get('next_entry_high')}，跌破 {a.get('no_entry_price')} 不進。"})
-    if not focus:
-        focus.append({"type": "無立即動作", "level": "blue", "name": "今日總覽", "symbol": "-", "message": "目前沒有需要立即處理的持股或進場提醒，依策略等待。"})
-    return focus
-
 def position_sizing(item, market):
     entry = item.get("next_entry_low") or item.get("price")
     stop = item.get("practical_stop") or item.get("initial_stop")
@@ -1050,7 +870,7 @@ def update_candidate_pool(items):
     for item in items:
         if item.get("level") not in ["S","A"] or item.get("entry_status") in ["跌破取消","過熱不追","不列入","流動性不足"]: continue
         sym=item["symbol"]; prev=old.get(sym,{})
-        c={k:item.get(k) for k in ["symbol","name","level","sector","buy_type","score","feedback_score","support_price","next_entry_low","next_entry_high","no_entry_price","invalid_price","practical_stop","risk_reward","risk_reward_note","risk_reward_group","target_price","sector_status","leader_status","leader_names","market_status","resistance_low","resistance_high","box_low","box_high","breakout_state","egg_zone","candle_signal","weekly_trend","daily_signal","mtf_status","sector_relative_rank","sector_relative_total","sector_relative_status","open_status","intraday_status","execution_action","execution_score","execution_note","open_price","day_high","day_low","day_close","ai_next_action","trade_plan_note","confidence_score","confidence_level","confidence_action","confidence_reasons","strong_scenario","normal_scenario","fail_scenario","blacklist_note"]}
+        c={k:item.get(k) for k in ["symbol","name","level","sector","buy_type","score","feedback_score","support_price","next_entry_low","next_entry_high","no_entry_price","invalid_price","practical_stop","risk_reward","risk_reward_note","risk_reward_group","target_price","sector_status","leader_status","leader_names","market_status","resistance_low","resistance_high","box_low","box_high","breakout_state","egg_zone","candle_signal","weekly_trend","daily_signal","mtf_status","sector_relative_rank","sector_relative_total","sector_relative_status","open_status","intraday_status","execution_action","execution_score","execution_note","open_price","day_high","day_low","day_close","ai_next_action","trade_plan_note"]}
         c.update({"previous_status":prev.get("current_status","-"),"current_status":item.get("entry_status","-"),"feedback_notes":item.get("feedback_notes",[]),"updated_at":now,"first_seen":prev.get("first_seen",today),"last_seen":today})
         new[sym]=c
         if c["current_status"]=="可觀察進場" and c.get("risk_reward",0)>=MIN_RISK_REWARD_ENTRY and c.get("execution_action") in ["可試單","可小部位試單","等待確認"]:
@@ -1116,17 +936,7 @@ def manage_holding(t, df):
     if curr<=stop: scale="建議全出"
     if give>=5 and maxfav>=8: scale="獲利回吐偏多，建議至少減碼"
     t.update({"curr":round2(curr),"pnl":pnl,"realized_pnl":round2(realized),"unrealized_pnl":round2((curr-entry)*shares) if shares else 0,"total_pnl":round2(realized+((curr-entry)*shares if shares else 0)),"highest_since_entry":round2(high),"lowest_since_entry":round2(low),"max_favorable_pct":maxfav,"max_drawdown_pct":maxdd,"profit_giveback_pct":give,"atr":round2(atr),"support_price":round2(support),"practical_stop":round2(stop),"invalid_price":round2(invalid),"conservative_trail":ctrail,"standard_trail":strail,"loose_trail":ltrail,"trail_range":f"{ltrail} ～ {ctrail}","trail_zone_name":trail_name,"conservative_action":"跌破保守風控，建議先減碼或提高警戒。","standard_action":standard_action,"loose_action":"跌破寬鬆風控，趨勢轉弱，建議全出。","scale_out_note":scale,"egg_zone_now":egg["egg_zone"],"egg_position_pct_now":egg["egg_position_pct"],"wave_start_price":round2(start_low),"wave_target_1":round2(t1),"wave_target_2":round2(t2),"wave_target_3":round2(t3),"progress_to_target_1":progress,"candle_signal_now":candle["candle_signal"],"ai_holding_status":status,"ai_exit_notice":notice})
-    # AI加碼與減碼分級：用於實戰操盤提示
-    if status == "續抱" and pnl >= 2 and curr > support and give < 3:
-        t["add_position_advice"] = "可觀察小幅加碼：浮盈達標、未跌破支撐、回吐不大。"
-    elif status in ["跌破保守風控", "跌破標準風控", "支撐失守", "實戰停損"]:
-        t["add_position_advice"] = "禁止加碼：已進入風控或支撐失守狀態。"
-    else:
-        t["add_position_advice"] = "暫不加碼：等待突破、回踩或浮盈更明確。"
-    t["exit_stage_1"] = f"第一減碼點：接近第一滿足點 {round2(t1)} 或跌破保守風控 {ctrail}。"
-    t["exit_stage_2"] = f"第二減碼點：跌破標準風控 {strail}。"
-    t["exit_stage_3"] = f"全出點：跌破寬鬆風控 {ltrail}、支撐 {round2(support)} 或實戰停損 {round2(stop)}。"
-    for k,v in {"shares":0,"note":"","trade_actions":[],"feedback_score":0,"feedback_notes":[],"weekly_trend":"-","daily_signal":"-","mtf_status":"-","execution_quality":"未記錄","entry_deviation_pct":0,"suggest_entry_low":0,"suggest_entry_high":0,"add_position_advice":"暫不加碼","discipline_warning":"尚無交易紀律判斷","exit_stage_1":"-","exit_stage_2":"-","exit_stage_3":"-"}.items():
+    for k,v in {"shares":0,"note":"","trade_actions":[],"feedback_score":0,"feedback_notes":[],"weekly_trend":"-","daily_signal":"-","mtf_status":"-","execution_quality":"未記錄","entry_deviation_pct":0,"suggest_entry_low":0,"suggest_entry_high":0}.items():
         t.setdefault(k,v)
     return t
 
@@ -1174,12 +984,6 @@ def scan_market():
         item["level"]=level; item=apply_feedback(item,feedback)
         if not market["allow_new_positions"]:
             item["entry_status"]="禁止新倉"; item["entry_reason"]=market["risk_note"]; item["ai_next_action"]="大盤風險偏高，禁止新倉"; item["execution_action"]="禁止新倉"
-        penalty, blacklist_note = blacklist_adjustment(item.get("symbol"))
-        if penalty:
-            item["score"] = round2(item.get("score", 0) + penalty)
-            item["blacklist_note"] = blacklist_note
-        item.update(trade_confidence(item, market))
-        item.update(scenario_plan(item))
         item.pop("df",None); final.append(item)
     final=sorted(final,key=lambda x:(x.get("level")=="S",x.get("execution_action")=="可試單",x.get("risk_reward",0),x.get("feedback_score",0),x.get("score",0)),reverse=True)
     cand=update_candidate_pool(final); cand_list=list(cand.get("candidates",{}).values())[:MAX_CANDIDATE_DISPLAY]; alerts=cand.get("entry_alerts",[])
@@ -1193,11 +997,7 @@ def index():
     for t in tracks:
         updated.append(manage_holding(t, download_stock(t["symbol"],"1y")))
     save_track(updated); dash=strategy_dashboard(logs); feedback=scan.get("strategy_feedback") or strategy_feedback(logs)
-    blacklist = update_blacklist_from_logs(logs)
-    equity = account_equity(logs)
-    focus_list = build_focus_list(scan, updated)
-    report = daily_report(scan, updated)
-    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), blacklist=blacklist, equity=equity, focus_list=focus_list, daily_report=report)
+    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100))
 
 
 @app.route("/scan-now")
@@ -1225,10 +1025,8 @@ def track(symbol):
     if any(x["symbol"]==symbol for x in tracks): return redirect(url_for("index"))
     actual=request.form.get("actual_price") if request.method=="POST" else None; shares=request.form.get("shares") if request.method=="POST" else None; note=request.form.get("note") if request.method=="POST" else ""
     price=safe_float(actual,0) or safe_float(item.get("next_entry_low")) or safe_float(item.get("price")); qty=safe_int(shares,0)
-    entry_low=safe_float(item.get("next_entry_low")); entry_high=safe_float(item.get("next_entry_high")); no_entry=safe_float(item.get("no_entry_price"))
-    eq=execution_quality(price,entry_low,entry_high,no_entry)
-    dw=discipline_warning(price,entry_low,entry_high,no_entry)
-    tracks.append({"symbol":symbol,"name":item.get("name",symbol),"level":item.get("level","-"),"sector":item.get("sector","-"),"buy_type":item.get("buy_type","-"),"price":price,"entry_price":price,"shares":qty,"realized_pnl":0,"trade_actions":[{"type":"初始追蹤","price":price,"shares":qty,"note":note or "加入追蹤","date":taiwan_now()}],"note":note or "","support_price":safe_float(item.get("support_price")),"no_entry_price":safe_float(item.get("no_entry_price")),"invalid_price":safe_float(item.get("invalid_price")),"practical_stop":safe_float(item.get("practical_stop")),"initial_stop":safe_float(item.get("practical_stop")),"risk_reward":safe_float(item.get("risk_reward")),"risk_reward_group":item.get("risk_reward_group",risk_reward_group(item.get("risk_reward",0))),"sector_status":item.get("sector_status","-"),"leader_status":item.get("leader_status","-"),"market_status":item.get("market_status","-"),"weekly_trend":item.get("weekly_trend","-"),"daily_signal":item.get("daily_signal","-"),"mtf_status":item.get("mtf_status","-"),"execution_quality":eq,"discipline_warning":dw,"confidence_score":item.get("confidence_score",0),"confidence_level":item.get("confidence_level","-"),"confidence_action":item.get("confidence_action","-"),"entry_deviation_pct":round2(pct(price,entry_high)) if entry_high else 0,"suggest_entry_low":entry_low,"suggest_entry_high":entry_high,"feedback_score":item.get("feedback_score",0),"feedback_notes":item.get("feedback_notes",[]),"date":today_str(),"ai_holding_status":"剛加入追蹤","ai_exit_notice":"等待隔日開盤與支撐確認。","highest_since_entry":price,"lowest_since_entry":price,"max_favorable_pct":0,"max_drawdown_pct":0,"profit_giveback_pct":0,"trail_range":"-","trail_zone_name":"AI移動風控區","wave_target_1":0,"wave_target_2":0,"wave_target_3":0})
+    eq=execution_quality(price,safe_float(item.get("next_entry_low")),safe_float(item.get("next_entry_high")),safe_float(item.get("no_entry_price")))
+    tracks.append({"symbol":symbol,"name":item.get("name",symbol),"level":item.get("level","-"),"sector":item.get("sector","-"),"buy_type":item.get("buy_type","-"),"price":price,"entry_price":price,"shares":qty,"realized_pnl":0,"trade_actions":[{"type":"初始追蹤","price":price,"shares":qty,"note":note or "加入追蹤","date":taiwan_now()}],"note":note or "","support_price":safe_float(item.get("support_price")),"no_entry_price":safe_float(item.get("no_entry_price")),"invalid_price":safe_float(item.get("invalid_price")),"practical_stop":safe_float(item.get("practical_stop")),"initial_stop":safe_float(item.get("practical_stop")),"risk_reward":safe_float(item.get("risk_reward")),"risk_reward_group":item.get("risk_reward_group",risk_reward_group(item.get("risk_reward",0))),"sector_status":item.get("sector_status","-"),"leader_status":item.get("leader_status","-"),"market_status":item.get("market_status","-"),"weekly_trend":item.get("weekly_trend","-"),"daily_signal":item.get("daily_signal","-"),"mtf_status":item.get("mtf_status","-"),"execution_quality":eq,"entry_deviation_pct":round2(pct(price,safe_float(item.get("next_entry_high")))) if item.get("next_entry_high") else 0,"suggest_entry_low":safe_float(item.get("next_entry_low")),"suggest_entry_high":safe_float(item.get("next_entry_high")),"feedback_score":item.get("feedback_score",0),"feedback_notes":item.get("feedback_notes",[]),"date":today_str(),"ai_holding_status":"剛加入追蹤","ai_exit_notice":"等待隔日開盤與支撐確認。","highest_since_entry":price,"lowest_since_entry":price,"max_favorable_pct":0,"max_drawdown_pct":0,"profit_giveback_pct":0,"trail_range":"-","trail_zone_name":"AI移動風控區","wave_target_1":0,"wave_target_2":0,"wave_target_3":0})
     save_track(tracks); return redirect(url_for("index"))
 
 
@@ -1275,7 +1073,7 @@ def close_trade(symbol):
     tracks=load_track(); logs=load_trade_log(); item=next((x for x in tracks if x["symbol"]==symbol),None)
     if not item: return redirect(url_for("index"))
     logs.append({"symbol":item.get("symbol"),"name":item.get("name"),"entry_price":item.get("price"),"exit_price":item.get("curr"),"shares":item.get("shares",0),"pnl_pct":item.get("pnl"),"realized_pnl":item.get("realized_pnl",0),"unrealized_pnl":item.get("unrealized_pnl",0),"total_pnl":item.get("total_pnl",0),"max_favorable_pct":item.get("max_favorable_pct",0),"max_drawdown_pct":item.get("max_drawdown_pct",0),"profit_giveback_pct":item.get("profit_giveback_pct",0),"execution_quality":item.get("execution_quality","未記錄"),"failure_type":failure_type(item),"entry_date":item.get("date"),"exit_date":today_str(),"level":item.get("level"),"buy_type":item.get("buy_type"),"sector":item.get("sector"),"risk_reward":item.get("risk_reward",0),"risk_reward_group":item.get("risk_reward_group",risk_reward_group(item.get("risk_reward",0))),"market_status":item.get("market_status","未記錄"),"leader_status":item.get("leader_status","未記錄"),"ai_holding_status":item.get("ai_holding_status"),"ai_exit_notice":item.get("ai_exit_notice")})
-    save_trade_log(logs); update_blacklist_from_logs(logs); save_track([x for x in tracks if x["symbol"] != symbol]); return redirect(url_for("index"))
+    save_trade_log(logs); save_track([x for x in tracks if x["symbol"] != symbol]); return redirect(url_for("index"))
 
 
 def scheduled_scan():
@@ -1289,6 +1087,15 @@ def scheduled_scan():
 
 scheduler = BackgroundScheduler(timezone=TZ)
 scheduler.add_job(scheduled_scan, trigger="cron", hour=16, minute=0, id="daily_market_scan", replace_existing=True)
+
+# LINE通知排程：
+# 09:10 開盤後持股狀態
+# 13:20 收盤前風控提醒
+# 16:05 盤後持股狀態 + 進場提醒
+scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=9, minute=10, id="line_holding_0910", replace_existing=True)
+scheduler.add_job(lambda: send_line_notification("holding"), trigger="cron", hour=13, minute=20, id="line_holding_1320", replace_existing=True)
+scheduler.add_job(lambda: send_line_notification("all"), trigger="cron", hour=16, minute=5, id="line_all_1605", replace_existing=True)
+
 scheduler.start()
 
 if __name__ == "__main__":
