@@ -109,6 +109,13 @@ def safe_float(x, default=0):
         return default
 
 
+def safe_int(x, default=0):
+    try:
+        return int(float(x))
+    except Exception:
+        return default
+
+
 def pct(a, b):
     try:
         if not b:
@@ -966,9 +973,6 @@ def analyze_breakout_pullback(df, resistance, box):
         }
 
     price = safe_float(df["Close"].iloc[-1])
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
 
     resistance_low = resistance.get("resistance_low", 0)
     resistance_high = resistance.get("resistance_high", 0)
@@ -976,8 +980,6 @@ def analyze_breakout_pullback(df, resistance, box):
     box_high = box.get("box_high", 0)
 
     recent = df.tail(8)
-    recent_low = safe_float(recent["Low"].min())
-    recent_close = recent["Close"]
 
     if resistance_high and price > resistance_high * 1.003:
         broke_resistance = True
@@ -1025,7 +1027,7 @@ def analyze_breakout_pullback(df, resistance, box):
             "breakout_note": "突破盤整上緣，等待回採上緣不破。"
         }
 
-    if resistance_high and price < resistance_low * 0.985 and recent_close.max() > resistance_low:
+    if resistance_high and price < resistance_low * 0.985 and df.tail(8)["Close"].max() > resistance_low:
         return {
             "breakout_state": "前高區失守",
             "breakout_score": -25,
@@ -1436,13 +1438,6 @@ def build_trade_plan(item):
     else:
         ai_next_action = "觀察"
 
-    first_pct = 30
-    second_pct = 30
-    third_pct = 40
-
-    second_add_price = round2(entry_high)
-    third_add_price = round2(target)
-
     return {
         "support_price": round2(support),
         "next_entry_low": entry_low,
@@ -1455,11 +1450,11 @@ def build_trade_plan(item):
         "risk_reward": risk_reward,
         "risk_reward_note": rr_note,
         "ai_next_action": ai_next_action,
-        "first_entry_pct": first_pct,
-        "second_entry_pct": second_pct,
-        "third_entry_pct": third_pct,
-        "second_add_price": second_add_price,
-        "third_add_price": third_add_price,
+        "first_entry_pct": 30,
+        "second_entry_pct": 30,
+        "third_entry_pct": 40,
+        "second_add_price": entry_high,
+        "third_add_price": target,
         "trade_plan_note": "依Top-Down流程：大盤位階、族群狀態、龍頭強度、前高K棒壓力區與盤整區間綜合判斷。"
     }
 
@@ -1631,7 +1626,31 @@ def update_candidate_pool(items):
 # =====================================================
 # 持股管理 AI
 # =====================================================
+def normalize_track_record(track):
+    if "price" not in track:
+        track["price"] = safe_float(track.get("entry_price"), 0)
+
+    if "entry_price" not in track:
+        track["entry_price"] = safe_float(track.get("price"), 0)
+
+    if "shares" not in track:
+        track["shares"] = 0
+
+    if "realized_pnl" not in track:
+        track["realized_pnl"] = 0
+
+    if "trade_actions" not in track:
+        track["trade_actions"] = []
+
+    if "note" not in track:
+        track["note"] = ""
+
+    return track
+
+
 def calc_holding_management(track, df):
+    track = normalize_track_record(track)
+
     if df is None or df.empty:
         return track
 
@@ -1642,6 +1661,9 @@ def calc_holding_management(track, df):
 
     atr = safe_float(calc_atr(df).iloc[-1])
     entry = safe_float(track.get("price"))
+    shares = safe_int(track.get("shares"))
+    realized_pnl = safe_float(track.get("realized_pnl"))
+
     support = safe_float(track.get("support_price")) or entry
     invalid_price = safe_float(track.get("invalid_price")) or support * 0.985
 
@@ -1699,7 +1721,17 @@ def calc_holding_management(track, df):
     target_3 = max(wave_3, atr_t3)
 
     progress_to_t1 = round2(curr / target_1 * 100) if target_1 else 0
-    pnl = round2(pct(curr, entry)) if entry else 0
+    pnl_pct = round2(pct(curr, entry)) if entry else 0
+
+    unrealized_pnl = round2((curr - entry) * shares) if shares else 0
+    total_pnl = round2(realized_pnl + unrealized_pnl)
+
+    if entry and shares:
+        position_value = round2(curr * shares)
+        cost_value = round2(entry * shares)
+    else:
+        position_value = 0
+        cost_value = 0
 
     candle = analyze_candle_pattern(df)
 
@@ -1759,7 +1791,12 @@ def calc_holding_management(track, df):
 
     track.update({
         "curr": round2(curr),
-        "pnl": pnl,
+        "pnl": pnl_pct,
+        "position_value": position_value,
+        "cost_value": cost_value,
+        "realized_pnl": round2(realized_pnl),
+        "unrealized_pnl": unrealized_pnl,
+        "total_pnl": total_pnl,
         "highest_since_entry": round2(highest),
         "atr": round2(atr),
         "support_price": round2(support),
@@ -1794,7 +1831,8 @@ def calc_holding_management(track, df):
 # 檔案讀寫
 # =====================================================
 def load_track():
-    return read_json_file(TRACK_FILE, [])
+    data = read_json_file(TRACK_FILE, [])
+    return [normalize_track_record(x) for x in data]
 
 
 def save_track(data):
@@ -2105,9 +2143,10 @@ def track(symbol):
 
     actual_price = request.form.get("actual_price") if request.method == "POST" else None
     shares = request.form.get("shares") if request.method == "POST" else None
+    note = request.form.get("note") if request.method == "POST" else ""
 
     entry_price = safe_float(actual_price, 0) or safe_float(item.get("next_entry_low")) or safe_float(item.get("price"))
-    actual_shares = int(safe_float(shares, 0)) if shares else 0
+    actual_shares = safe_int(shares, 0)
 
     data.append({
         "symbol": symbol,
@@ -2118,6 +2157,17 @@ def track(symbol):
         "price": entry_price,
         "entry_price": entry_price,
         "shares": actual_shares,
+        "realized_pnl": 0,
+        "trade_actions": [
+            {
+                "type": "初始追蹤",
+                "price": entry_price,
+                "shares": actual_shares,
+                "note": note or "加入追蹤",
+                "date": taiwan_now()
+            }
+        ],
+        "note": note or "",
         "support_price": safe_float(item.get("support_price")),
         "no_entry_price": safe_float(item.get("no_entry_price")),
         "invalid_price": safe_float(item.get("invalid_price")),
@@ -2134,6 +2184,120 @@ def track(symbol):
         "wave_target_2": 0,
         "wave_target_3": 0
     })
+
+    save_track(data)
+    return redirect(url_for("index"))
+
+
+@app.route("/update-track/<symbol>", methods=["POST"])
+def update_track(symbol):
+    data = load_track()
+
+    for t in data:
+        if t["symbol"] == symbol:
+            old_price = safe_float(t.get("price"))
+            old_shares = safe_int(t.get("shares"))
+
+            new_price = safe_float(request.form.get("price"), old_price)
+            new_shares = safe_int(request.form.get("shares"), old_shares)
+            new_stop = safe_float(request.form.get("practical_stop"), safe_float(t.get("practical_stop")))
+            new_note = request.form.get("note", t.get("note", ""))
+
+            t["price"] = new_price
+            t["entry_price"] = new_price
+            t["shares"] = new_shares
+            t["practical_stop"] = new_stop
+            t["initial_stop"] = new_stop
+            t["note"] = new_note
+
+            t.setdefault("trade_actions", []).append({
+                "type": "修改資料",
+                "price": new_price,
+                "shares": new_shares,
+                "note": new_note or "手動修改成本、股數或停損",
+                "date": taiwan_now()
+            })
+
+            break
+
+    save_track(data)
+    return redirect(url_for("index"))
+
+
+@app.route("/add-position/<symbol>", methods=["POST"])
+def add_position(symbol):
+    data = load_track()
+
+    add_price = safe_float(request.form.get("add_price"))
+    add_shares = safe_int(request.form.get("add_shares"))
+    add_note = request.form.get("add_note", "")
+
+    if add_price <= 0 or add_shares <= 0:
+        return redirect(url_for("index"))
+
+    for t in data:
+        if t["symbol"] == symbol:
+            old_price = safe_float(t.get("price"))
+            old_shares = safe_int(t.get("shares"))
+
+            total_cost = old_price * old_shares + add_price * add_shares
+            total_shares = old_shares + add_shares
+
+            if total_shares > 0:
+                new_avg_price = round2(total_cost / total_shares)
+            else:
+                new_avg_price = old_price
+
+            t["price"] = new_avg_price
+            t["entry_price"] = new_avg_price
+            t["shares"] = total_shares
+
+            t.setdefault("trade_actions", []).append({
+                "type": "加碼",
+                "price": add_price,
+                "shares": add_shares,
+                "note": add_note or "手動加碼",
+                "date": taiwan_now()
+            })
+
+            break
+
+    save_track(data)
+    return redirect(url_for("index"))
+
+
+@app.route("/reduce-position/<symbol>", methods=["POST"])
+def reduce_position(symbol):
+    data = load_track()
+
+    reduce_price = safe_float(request.form.get("reduce_price"))
+    reduce_shares = safe_int(request.form.get("reduce_shares"))
+    reduce_note = request.form.get("reduce_note", "")
+
+    if reduce_price <= 0 or reduce_shares <= 0:
+        return redirect(url_for("index"))
+
+    for t in data:
+        if t["symbol"] == symbol:
+            old_price = safe_float(t.get("price"))
+            old_shares = safe_int(t.get("shares"))
+            sell_shares = min(reduce_shares, old_shares)
+
+            realized = round2((reduce_price - old_price) * sell_shares)
+
+            t["shares"] = max(old_shares - sell_shares, 0)
+            t["realized_pnl"] = round2(safe_float(t.get("realized_pnl")) + realized)
+
+            t.setdefault("trade_actions", []).append({
+                "type": "減碼",
+                "price": reduce_price,
+                "shares": sell_shares,
+                "realized_pnl": realized,
+                "note": reduce_note or "手動減碼",
+                "date": taiwan_now()
+            })
+
+            break
 
     save_track(data)
     return redirect(url_for("index"))
@@ -2161,13 +2325,18 @@ def close_trade(symbol):
         "name": item.get("name"),
         "entry_price": item.get("price"),
         "exit_price": item.get("curr"),
-        "pnl_pct": item.get("pnl"),
         "shares": item.get("shares", 0),
+        "pnl_pct": item.get("pnl"),
+        "realized_pnl": item.get("realized_pnl", 0),
+        "unrealized_pnl": item.get("unrealized_pnl", 0),
+        "total_pnl": item.get("total_pnl", 0),
         "entry_date": item.get("date"),
         "exit_date": today_str(),
         "level": item.get("level"),
         "buy_type": item.get("buy_type"),
         "sector": item.get("sector"),
+        "note": item.get("note", ""),
+        "trade_actions": item.get("trade_actions", []),
         "ai_holding_status": item.get("ai_holding_status"),
         "ai_exit_notice": item.get("ai_exit_notice")
     })
