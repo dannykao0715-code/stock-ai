@@ -4,7 +4,7 @@ import time
 import math
 import threading
 from io import StringIO
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
@@ -15,6 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 
 app = Flask(__name__)
+
 
 # =====================================================
 # 登入保護
@@ -1216,6 +1217,7 @@ def build_trade_plan(item):
             "next_entry_high": 0,
             "no_entry_price": 0,
             "invalid_price": 0,
+            "practical_stop": 0,
             "initial_stop": 0,
             "standard_trailing_stop": 0,
             "risk_reward": 0,
@@ -1233,11 +1235,14 @@ def build_trade_plan(item):
 
     no_entry_price = round(support * 0.995, 2)
     invalid_price = round(min(support * 0.99, pullback_low * 0.99), 2)
-    initial_stop = invalid_price
+
+    practical_stop = round(max(support * 0.985, next_entry_low - atr * 1.5), 2)
+    initial_stop = practical_stop
+
     standard_trailing_stop = round(price - atr * 2.5, 2)
     target_price = round(next_entry_low + atr * 3, 2)
 
-    risk = max(next_entry_low - initial_stop, 0.01)
+    risk = max(next_entry_low - practical_stop, 0.01)
     reward = max(target_price - next_entry_low, 0.01)
     risk_reward = round(reward / risk, 2)
 
@@ -1252,24 +1257,28 @@ def build_trade_plan(item):
     else:
         ai_next_action = "觀察"
 
+    if risk_reward < 1.5:
+        ai_next_action = "風報比不足，等待更低進場價或放棄"
+
     return {
         "support_price": round(support, 2),
         "next_entry_low": next_entry_low,
         "next_entry_high": next_entry_high,
         "no_entry_price": no_entry_price,
         "invalid_price": invalid_price,
+        "practical_stop": practical_stop,
         "initial_stop": initial_stop,
         "standard_trailing_stop": standard_trailing_stop,
         "target_price": target_price,
         "risk_reward": risk_reward,
         "ai_next_action": ai_next_action,
-        "trade_plan_note": "明日開盤若站在進場區間內可試單；跌破不進場點位則不進場；跌破失效價取消候選。"
+        "trade_plan_note": "明日開盤若站在進場區間內可試單；跌破不進場點位則不進場；跌破實戰停損價需停損；假突破失效價只作為候選取消參考。"
     }
 
 
 def calc_position_sizing(item, market_info):
     entry = item.get("next_entry_low") or item.get("price")
-    stop = item.get("initial_stop")
+    stop = item.get("practical_stop") or item.get("initial_stop")
 
     risk_multiplier = market_info.get("risk_multiplier", 0)
     adjusted_risk_amount = ACCOUNT_SIZE * RISK_PER_TRADE * risk_multiplier
@@ -1421,6 +1430,7 @@ def update_candidate_pool(items):
             "next_entry_high": item.get("next_entry_high", 0),
             "no_entry_price": item.get("no_entry_price", 0),
             "invalid_price": item.get("invalid_price", 0),
+            "practical_stop": item.get("practical_stop", 0),
             "initial_stop": item.get("initial_stop", 0),
             "risk_reward": item.get("risk_reward", 0),
             "egg_zone": item.get("egg_zone", "-"),
@@ -1479,7 +1489,22 @@ def calc_holding_management(track, df):
     atr = safe_float(calc_atr(df).iloc[-1])
     entry = safe_float(track.get("price"))
     support = safe_float(track.get("support_price")) or safe_float(track.get("entry_price")) or entry
-    initial_stop = safe_float(track.get("initial_stop")) or support * 0.99
+
+    old_invalid_price = safe_float(track.get("invalid_price"))
+    if not old_invalid_price:
+        old_invalid_price = safe_float(track.get("initial_stop"))
+
+    if not old_invalid_price:
+        old_invalid_price = support * 0.99
+
+    practical_stop = safe_float(track.get("practical_stop"))
+    if not practical_stop and atr:
+        practical_stop = max(support * 0.985, entry - atr * 1.5)
+    elif not practical_stop:
+        practical_stop = support * 0.985
+
+    practical_stop = round(practical_stop, 2)
+    invalid_price = round(old_invalid_price, 2)
 
     entry_date = track.get("date", today_str())
     entry_dt = pd.to_datetime(entry_date, errors="coerce")
@@ -1497,6 +1522,25 @@ def calc_holding_management(track, df):
     conservative_trail = round(highest - atr * 2.0, 2) if atr else 0
     standard_trail = round(highest - atr * 2.5, 2) if atr else 0
     loose_trail = round(highest - atr * 3.0, 2) if atr else 0
+
+    if standard_trail > entry and curr >= entry + atr * 1.5:
+        trail_zone_name = "移動停利區"
+        standard_label = "標準移動停利"
+        standard_break_action = "跌破標準移動停利，建議停利出場。"
+    else:
+        trail_zone_name = "移動停損區"
+        standard_label = "標準移動停損"
+        standard_break_action = "跌破標準移動停損，建議停損出場。"
+
+    if conservative_trail > entry:
+        conservative_action = "跌破保守移動停利，建議先減碼或鎖利。"
+    else:
+        conservative_action = "跌破保守移動停損，代表接近成本防守，建議先減碼或提高警戒。"
+
+    if loose_trail > entry:
+        loose_action = "跌破寬鬆移動停利，趨勢轉弱，建議全出。"
+    else:
+        loose_action = "跌破寬鬆移動停損，趨勢轉弱，建議全出。"
 
     low_120 = safe_float(low.rolling(120).min().iloc[-1])
     high_120 = safe_float(high.rolling(120).max().iloc[-1])
@@ -1527,21 +1571,29 @@ def calc_holding_management(track, df):
         curr >= support * 1.003
     ) if len(close) >= 2 else False
 
-    if curr <= initial_stop:
-        ai_status = "立即停損"
-        ai_exit_notice = "已跌破初始停損，建議停損出場。"
+    if curr <= practical_stop:
+        ai_status = "實戰停損"
+        ai_exit_notice = "已跌破實戰停損價，建議停損出場，避免賺少賠多或虧損擴大。"
+
+    elif curr <= invalid_price:
+        ai_status = "假突破失效"
+        ai_exit_notice = "已跌破假突破失效價，候選邏輯失效，建議取消或全出。"
 
     elif support_broken:
         ai_status = "支撐失守"
         ai_exit_notice = "已跌破支撐點，建議先出場或至少減碼。"
 
-    elif curr <= standard_trail and pnl > 0:
-        ai_status = "跌破移動停利"
-        ai_exit_notice = "已跌破標準移動停利，建議部分停利或出場。"
+    elif curr <= standard_trail:
+        ai_status = "跌破標準風控"
+        ai_exit_notice = standard_break_action
 
-    elif curr <= loose_trail and pnl > 0:
+    elif curr <= conservative_trail:
+        ai_status = "跌破保守風控"
+        ai_exit_notice = conservative_action
+
+    elif curr <= loose_trail:
         ai_status = "趨勢轉弱"
-        ai_exit_notice = "已跌破寬鬆移動停利，趨勢可能轉弱，建議出場。"
+        ai_exit_notice = loose_action
 
     elif support_stand_back:
         ai_status = "假跌破站回"
@@ -1561,7 +1613,7 @@ def calc_holding_management(track, df):
 
     else:
         ai_status = "續抱"
-        ai_exit_notice = "尚未觸發停損或移動停利，依策略續抱。"
+        ai_exit_notice = "尚未跌破AI移動風控區、支撐點或實戰停損價，依策略續抱。"
 
     track.update({
         "curr": round(curr, 2),
@@ -1569,11 +1621,18 @@ def calc_holding_management(track, df):
         "highest_since_entry": round(highest, 2),
         "atr": round(atr, 2),
         "support_price": round(support, 2),
-        "initial_stop": round(initial_stop, 2),
+        "practical_stop": practical_stop,
+        "initial_stop": practical_stop,
+        "invalid_price": invalid_price,
         "conservative_trail": conservative_trail,
         "standard_trail": standard_trail,
         "loose_trail": loose_trail,
         "trail_range": f"{loose_trail} ～ {conservative_trail}",
+        "trail_zone_name": trail_zone_name,
+        "standard_label": standard_label,
+        "conservative_action": conservative_action,
+        "standard_action": standard_break_action,
+        "loose_action": loose_action,
         "egg_zone_now": egg["egg_zone"],
         "egg_position_pct_now": egg["egg_position_pct"],
         "wave_start_price": round(start_low, 2),
@@ -1925,7 +1984,8 @@ def track(symbol):
         "support_price": safe_float(item.get("support_price")),
         "no_entry_price": safe_float(item.get("no_entry_price")),
         "invalid_price": safe_float(item.get("invalid_price")),
-        "initial_stop": safe_float(item.get("initial_stop")),
+        "practical_stop": safe_float(item.get("practical_stop")),
+        "initial_stop": safe_float(item.get("practical_stop")) or safe_float(item.get("initial_stop")),
         "standard_trailing_stop": safe_float(item.get("standard_trailing_stop")),
         "risk_reward": safe_float(item.get("risk_reward")),
         "date": today_str(),
@@ -1933,6 +1993,7 @@ def track(symbol):
         "ai_exit_notice": "等待隔日開盤與支撐確認。",
         "highest_since_entry": entry_price,
         "trail_range": "-",
+        "trail_zone_name": "AI移動風控區",
         "wave_target_1": 0,
         "wave_target_2": 0,
         "wave_target_3": 0
