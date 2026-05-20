@@ -38,6 +38,18 @@ MIN_AVG_VOLUME_20 = 500_000
 MIN_AVG_AMOUNT_20 = 5_000_000
 MIN_FEEDBACK_SAMPLE = 3
 
+# =====================================================
+# 省資源掃描模式設定
+# =====================================================
+# 全市場約 1800 檔會先做「粗篩」，只留下分數較高的股票再做完整細算。
+# 這樣可以保留全市場掃描概念，但大幅降低 CPU 與記憶體消耗。
+ENABLE_RESOURCE_SAVING_SCAN = os.getenv("ENABLE_RESOURCE_SAVING_SCAN", "1") == "1"
+ROUGH_SCAN_TOP_N = int(os.getenv("ROUGH_SCAN_TOP_N", "320"))
+ROUGH_SCAN_MIN_SCORE = float(os.getenv("ROUGH_SCAN_MIN_SCORE", "15"))
+DETAILED_ANALYSIS_SLEEP = float(os.getenv("DETAILED_ANALYSIS_SLEEP", "0.01"))
+ROUGH_ANALYSIS_SLEEP = float(os.getenv("ROUGH_ANALYSIS_SLEEP", "0.005"))
+DATA_CACHE_DIR = os.getenv("DATA_CACHE_DIR", "data_cache")
+
 is_scanning = False
 
 
@@ -290,17 +302,48 @@ def get_stock_pool():
 
 
 def download_stock(symbol, period="1y"):
+    """
+    省資源資料下載：
+    1. 同一檔股票、同一天、同一 period 只下載一次。
+    2. 09:10 / 13:20 LINE 通知只會讀候選池與持股，避免重複抓全市場。
+    3. Railway 重新部署後快取可能消失，這是正常現象，不影響功能。
+    """
     try:
-        df = yf.download(symbol, period=period, interval="1d", progress=False, auto_adjust=False, threads=False)
-        if df.empty:
+        if not symbol:
             return None
+
+        os.makedirs(DATA_CACHE_DIR, exist_ok=True)
+        safe_symbol = str(symbol).replace("/", "_").replace("\\", "_").replace(":", "_")
+        cache_path = os.path.join(DATA_CACHE_DIR, f"{safe_symbol}_{period}_{today_str()}.csv")
+
+        if os.path.exists(cache_path):
+            try:
+                cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+                if cached is not None and not cached.empty:
+                    return cached.dropna()
+            except Exception:
+                pass
+
+        df = yf.download(symbol, period=period, interval="1d", progress=False, auto_adjust=False, threads=False)
+
+        if df is None or df.empty:
+            return None
+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        return df.dropna()
+
+        df = df.dropna()
+
+        try:
+            df.to_csv(cache_path)
+        except Exception:
+            pass
+
+        return df
+
     except Exception as e:
         print("download failed", symbol, e)
         return None
-
 
 def infer_sector(symbol, name, industry):
     if industry and industry not in ["上市", "上櫃", "其他"]:
@@ -956,13 +999,42 @@ def short_symbol(symbol):
     return str(symbol).replace(".TW", "").replace(".TWO", "")
 
 
+def classify_holding_line_action(t):
+    status = t.get("ai_holding_status", "")
+    pnl = safe_float(t.get("pnl", 0))
+    curr = safe_float(t.get("curr", 0))
+    standard = safe_float(t.get("standard_trail", 0))
+    practical_stop = safe_float(t.get("practical_stop", 0))
+    support = safe_float(t.get("support_price", 0))
+    max_favorable = safe_float(t.get("max_favorable_pct", 0))
+    giveback = safe_float(t.get("profit_giveback_pct", 0))
+
+    if status in ["實戰停損", "假突破失效", "支撐失守"] or (practical_stop and curr and curr <= practical_stop):
+        return "停損", "🚨", "跌破實戰停損或支撐，請優先處理。"
+
+    if status in ["跌破標準風控", "跌破保守風控"] or (standard and curr and curr <= standard):
+        return "停利/減碼", "⚠️", "跌破移動風控，建議停利或減碼。"
+
+    if status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"]:
+        return "停利", "⚠️", "接近滿足點或獲利回吐，注意分批停利。"
+
+    if max_favorable >= 8 and giveback >= 5:
+        return "停利/減碼", "⚠️", "浮盈回吐偏多，建議至少部分鎖利。"
+
+    if pnl >= 2 and status in ["續抱", "假跌破站回"] and support and curr and curr > support * 1.02:
+        return "可觀察加碼", "🟢", "持股轉強，但仍需確認大盤與量能，不追高加碼。"
+
+    return "續抱", "✅", "尚未觸發停利或停損，續抱觀察。"
+
+
 def format_line_holding_status():
     tracks = load_track()
 
     if not tracks:
-        return "📌 AI持股狀態\n目前沒有追蹤中的持股。"
+        return "📌 持股狀態\n目前沒有追蹤中的持股。"
 
-    rows = ["📌 AI持股狀態"]
+    rows = ["📌 持股狀態"]
+    has_warning = False
 
     for t in tracks:
         try:
@@ -971,38 +1043,23 @@ def format_line_holding_status():
         except Exception:
             pass
 
-        name = t.get("name", "-")
-        symbol = short_symbol(t.get("symbol", ""))
-        curr = t.get("curr", "-")
-        cost = t.get("price", "-")
-        pnl = t.get("pnl", "-")
-        status = t.get("ai_holding_status", "-")
-        notice = t.get("ai_exit_notice", "-")
-        trail = t.get("trail_range", "-")
-        support = t.get("support_price", "-")
-        stop = t.get("practical_stop", "-")
+        action, icon, simple_note = classify_holding_line_action(t)
 
-        if status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"]:
-            action = "🚨 建議減碼或出場"
-        elif status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"]:
-            action = "⚠️ 注意停利或減碼"
-        else:
-            action = "✅ 繼續持有"
+        if action != "續抱":
+            has_warning = True
 
         rows.append(
-            f"\n{name} {symbol}\n"
-            f"現價：{curr}\n"
-            f"成本：{cost}\n"
-            f"損益：{pnl}%\n"
-            f"狀態：{status}\n"
-            f"判斷：{action}\n"
-            f"移動風控：{trail}\n"
-            f"支撐/停損：{support} / {stop}\n"
-            f"AI：{notice}"
+            f"\n{icon} {t.get('name','-')} {short_symbol(t.get('symbol',''))}\n"
+            f"建議：{action}\n"
+            f"現價：{t.get('curr','-')}｜成本：{t.get('price','-')}｜損益：{t.get('pnl','-')}%\n"
+            f"停損：{t.get('practical_stop','-')}｜風控：{t.get('trail_range','-')}\n"
+            f"說明：{simple_note}"
         )
 
-    return "\n".join(rows)
+    if not has_warning:
+        rows.insert(1, "\n目前沒有需要馬上處理的持股。")
 
+    return "\n".join(rows)
 
 def format_line_entry_alerts():
     scan = load_scan_results()
@@ -1064,136 +1121,83 @@ def format_line_daily_review():
 
 
 def format_line_open_watch():
-    scan = load_scan_results()
-    alerts = scan.get("entry_alerts", [])
-    candidates = scan.get("candidate_pool", [])
-    watch_list = alerts if alerts else candidates[:8]
+    tracks = load_track()
 
     rows = [
-        "🌅 09:10 開盤監測",
-        f"大盤：{scan.get('market_status', '-')}",
-        f"操作模式：{scan.get('risk_mode', '-')}",
-        f"風險開關：{scan.get('risk_switch', '-')}",
-        "",
-        "重點：開盤只做監測，不急著追價。"
+        "🌅 09:10 持股風控提醒",
+        "重點：只提醒持股是否需要注意、停利、減碼或停損。"
     ]
 
-    if not watch_list:
-        rows.append("\n目前沒有可監測的候選股票。")
+    if not tracks:
+        rows.append("\n目前沒有追蹤中的持股。")
         return "\n".join(rows)
 
-    for a in watch_list[:6]:
-        name = a.get("name", "-")
-        symbol = short_symbol(a.get("symbol", ""))
-        entry_low = safe_float(a.get("next_entry_low", 0))
-        entry_high = safe_float(a.get("next_entry_high", 0))
-        no_entry = safe_float(a.get("no_entry_price", 0))
-        support = safe_float(a.get("support_price", 0))
-        buy_type = a.get("buy_type", "-")
-        planned_note = a.get("ai_next_action", "-")
+    warning_rows = []
+    normal_count = 0
 
-        current_price = safe_float(a.get("open_price", 0)) or safe_float(a.get("day_close", 0)) or safe_float(a.get("price", 0))
-        if not current_price:
-            try:
-                df = download_stock(a.get("symbol"), "5d")
-                current_price = safe_float(df["Open"].iloc[-1]) if df is not None and not df.empty else 0
-            except Exception:
-                current_price = 0
+    for t in tracks:
+        try:
+            df = download_stock(t["symbol"], "1y")
+            t = manage_holding(t, df)
+        except Exception:
+            pass
 
-        if current_price and entry_low and entry_high:
-            if current_price > entry_high:
-                status = "開太高，不追"
-                advice = f"列入觀察，等回採 {entry_high} 附近不破再考慮。"
-            elif current_price < no_entry:
-                status = "跳空或開低跌破，不進"
-                advice = f"先觀察是否站回 {no_entry} 之上，沒有站回就取消。"
-            elif entry_low <= current_price <= entry_high:
-                status = "進入觀察區"
-                advice = "先看大盤方向與量能，收盤前再確認是否試單。"
-            elif current_price >= no_entry and current_price < entry_low:
-                status = "低於進場區但未破支撐"
-                advice = "可觀察是否站回進場區，不急進。"
-            else:
-                status = "觀察中"
-                advice = planned_note
-        else:
-            status = a.get("current_status", a.get("entry_status", "-"))
-            advice = planned_note
+        action, icon, simple_note = classify_holding_line_action(t)
 
-        rows.append(
-            f"\n{name} {symbol}\n"
-            f"買點：{buy_type}\n"
-            f"計畫區間：{entry_low} ～ {entry_high}\n"
-            f"目前/開盤：約 {round2(current_price)}\n"
-            f"跌破不進：{no_entry}\n"
-            f"支撐：{support}\n"
-            f"狀態：{status}\n"
-            f"AI：{advice}"
+        if action == "續抱":
+            normal_count += 1
+            continue
+
+        warning_rows.append(
+            f"\n{icon} {t.get('name','-')} {short_symbol(t.get('symbol',''))}\n"
+            f"建議：{action}\n"
+            f"現價：{t.get('curr','-')}｜成本：{t.get('price','-')}｜損益：{t.get('pnl','-')}%\n"
+            f"停損：{t.get('practical_stop','-')}｜支撐：{t.get('support_price','-')}\n"
+            f"風控：{t.get('trail_range','-')}\n"
+            f"說明：{simple_note}"
         )
 
-    return "\n".join(rows)
+    if warning_rows:
+        rows.append("\n以下持股需要注意：")
+        rows.extend(warning_rows)
+        if normal_count:
+            rows.append(f"\n其餘 {normal_count} 檔目前判斷續抱。")
+    else:
+        rows.append("\n目前持股沒有立即停利、減碼或停損警示，續抱觀察。")
 
+    return "\n".join(rows)
 
 def format_line_preclose_decision():
     scan = load_scan_results()
     alerts = scan.get("entry_alerts", [])
     candidates = scan.get("candidate_pool", [])
-    watch_list = alerts if alerts else candidates[:8]
+    watch_list = alerts if alerts else candidates[:10]
 
     rows = [
-        "🕐 13:20 收盤前決策",
+        "🕐 13:20 可進場試單提醒",
         f"大盤：{scan.get('market_status', '-')}",
         f"操作模式：{scan.get('risk_mode', '-')}",
-        "",
-        "先看持股風控，再看是否仍符合前一晚交易計畫。"
+        "重點：只提醒目前仍符合計畫、可考慮試單的股票。"
     ]
 
-    tracks = load_track()
-    if tracks:
-        rows.append("\n📌 持股處理")
-        for t in tracks[:5]:
-            try:
-                df = download_stock(t["symbol"], "1y")
-                t = manage_holding(t, df)
-            except Exception:
-                pass
-
-            status = t.get("ai_holding_status", "-")
-            if status in ["實戰停損", "假突破失效", "支撐失守", "跌破標準風控", "跌破保守風控", "趨勢轉弱"]:
-                action = "🚨 減碼或出場"
-            elif status in ["接近第一滿足點", "接近第二滿足點", "接近滿足點需停利", "獲利回吐警戒"]:
-                action = "⚠️ 注意停利"
-            else:
-                action = "✅ 續抱"
-
-            rows.append(
-                f"\n{t.get('name','-')} {short_symbol(t.get('symbol',''))}\n"
-                f"現價：{t.get('curr','-')}｜成本：{t.get('price','-')}｜損益：{t.get('pnl','-')}%\n"
-                f"狀態：{status}\n"
-                f"判斷：{action}\n"
-                f"風控：{t.get('trail_range','-')}\n"
-                f"AI：{t.get('ai_exit_notice','-')}"
-            )
-    else:
-        rows.append("\n📌 持股處理\n目前沒有追蹤中的持股。")
-
-    rows.append("\n🚀 收盤前可試單觀察")
     if not watch_list:
-        rows.append("目前沒有可觀察進場股票。")
+        rows.append("\n目前沒有可觀察進場股票。")
         return "\n".join(rows)
 
-    found = 0
-    for a in watch_list[:8]:
+    trial_rows = []
+    observe_rows = []
+
+    for a in watch_list[:10]:
         name = a.get("name", "-")
         symbol = short_symbol(a.get("symbol", ""))
         entry_low = safe_float(a.get("next_entry_low", 0))
         entry_high = safe_float(a.get("next_entry_high", 0))
         no_entry = safe_float(a.get("no_entry_price", 0))
-        support = safe_float(a.get("support_price", 0))
         rr = a.get("risk_reward", "-")
         buy_type = a.get("buy_type", "-")
 
         current_price = safe_float(a.get("day_close", 0)) or safe_float(a.get("price", 0))
+
         if not current_price:
             try:
                 df = download_stock(a.get("symbol"), "5d")
@@ -1203,86 +1207,62 @@ def format_line_preclose_decision():
 
         if current_price and entry_low and entry_high:
             if current_price < no_entry:
-                status = "跌破不進，取消試單"
-                advice = "等重新站回支撐後再觀察。"
+                status = "跌破不進"
+                advice = "取消試單，等重新站回支撐再觀察。"
+                target_list = observe_rows
             elif current_price > entry_high:
-                status = "高於進場區，不追"
-                advice = "等回採不破再考慮。"
+                status = "高於進場區"
+                advice = "不追高，等回採不破再考慮。"
+                target_list = observe_rows
             elif entry_low <= current_price <= entry_high:
-                status = "仍在進場區間"
+                status = "可進場試單"
                 advice = "若大盤未破支撐，可小部位試單。"
-                found += 1
+                target_list = trial_rows
             elif current_price >= no_entry and current_price < entry_low:
-                status = "未破支撐但尚未站回進場區"
-                advice = "可繼續觀察，暫不急買。"
+                status = "未破支撐但未到進場區"
+                advice = "續觀察，暫不急買。"
+                target_list = observe_rows
             else:
                 status = "觀察中"
                 advice = a.get("ai_next_action", "-")
+                target_list = observe_rows
         else:
             status = a.get("current_status", a.get("entry_status", "-"))
             advice = a.get("ai_next_action", "-")
+            target_list = trial_rows if status == "可觀察進場" else observe_rows
 
-        rows.append(
+        item_text = (
             f"\n{name} {symbol}\n"
-            f"買點：{buy_type}\n"
+            f"建議：{status}\n"
             f"目前價：約 {round2(current_price)}\n"
             f"進場區：{entry_low} ～ {entry_high}\n"
             f"跌破不進：{no_entry}\n"
-            f"支撐：{support}\n"
+            f"開高不追：{entry_high}\n"
             f"風報比：{rr}\n"
-            f"狀態：{status}\n"
+            f"買點：{buy_type}\n"
             f"AI：{advice}"
         )
 
-    if found == 0:
+        target_list.append(item_text)
+
+    if trial_rows:
+        rows.append("\n🚀 可進場試單")
+        rows.extend(trial_rows[:5])
+    else:
         rows.append("\n目前沒有明確落在進場區且可試單的股票。")
 
-    return "\n".join(rows)
+    if observe_rows:
+        rows.append("\n📌 其他觀察")
+        rows.extend(observe_rows[:3])
 
+    return "\n".join(rows)
 
 def format_line_next_day_plan():
-    scan = load_scan_results()
-    alerts = scan.get("entry_alerts", [])
-    candidates = scan.get("candidate_pool", [])
-    plan_list = alerts if alerts else candidates[:8]
-
-    rows = [
-        "📊 16:05 盤後交易計畫",
-        f"大盤：{scan.get('market_status','-')}",
-        f"操作模式：{scan.get('risk_mode','-')}",
-        f"風險開關：{scan.get('risk_switch','-')}",
-        f"股票池：{scan.get('stock_pool_count',0)} 檔",
-        f"AI候選：{scan.get('candidate_count',0)} 檔",
-        f"進場提醒：{len(alerts)} 檔",
-        "",
-        "明日策略：前一天規劃，隔天開盤驗證，收盤前決策。"
-    ]
-
-    sectors = scan.get("sector_rankings", [])
-    if sectors:
-        rows.append("\n🔥 主流族群")
-        rows.append("、".join([x.get("sector", "-") for x in sectors[:3]]))
-
-    if not plan_list:
-        rows.append("\n目前沒有明日交易計畫。")
-        return "\n".join(rows)
-
-    rows.append("\n🚀 明日觀察清單")
-
-    for a in plan_list[:6]:
-        rows.append(
-            f"\n{a.get('name','-')} {short_symbol(a.get('symbol',''))}\n"
-            f"買點：{a.get('buy_type','-')}\n"
-            f"明日進場區：{a.get('next_entry_low','-')} ～ {a.get('next_entry_high','-')}\n"
-            f"跌破不進：{a.get('no_entry_price','-')}\n"
-            f"開盤超過不追：{a.get('next_entry_high','-')}\n"
-            f"停損：{a.get('practical_stop','-')}\n"
-            f"風報比：{a.get('risk_reward','-')}\n"
-            f"AI：{a.get('ai_next_action','-')}"
-        )
-
-    return "\n".join(rows)
-
+    return (
+        "📊 盤後通知已關閉\n"
+        "目前設定不推播隔日交易計畫。\n"
+        "系統仍可在網站內查看 AI候選池、進場提醒與族群排行。"
+    )
 
 def format_line_message(mode="all"):
     if mode == "open":
@@ -1461,41 +1441,317 @@ def failure_type(item):
     return "一般停損失敗"
 
 
+
+def quick_rough_score(df):
+    """
+    全市場粗篩分數：
+    只計算最必要的趨勢、量能、過熱與流動性，先把不適合的股票排除。
+    詳細的 K棒、波浪、雞蛋理論、風報比，留到第二層細算處理。
+    """
+    if df is None or len(df) < 80:
+        return None
+
+    try:
+        c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
+        price = safe_float(c.iloc[-1])
+        if not price:
+            return None
+
+        ma20 = safe_float(c.rolling(20).mean().iloc[-1])
+        ma60 = safe_float(c.rolling(60).mean().iloc[-1])
+        high60 = safe_float(h.rolling(60).max().iloc[-2]) if len(h) > 61 else safe_float(h.max())
+        avg_vol20 = safe_float(v.rolling(20).mean().iloc[-1])
+        avg_amt20 = safe_float((c * v).rolling(20).mean().iloc[-1])
+        ch5 = pct(c.iloc[-1], c.iloc[-5]) if len(c) >= 5 else 0
+        ch20 = pct(c.iloc[-1], c.iloc[-20]) if len(c) >= 20 else 0
+        ch60 = pct(c.iloc[-1], c.iloc[-60]) if len(c) >= 60 else 0
+
+        score = 0
+        reasons = []
+
+        if avg_vol20 >= MIN_AVG_VOLUME_20:
+            score += 10
+        else:
+            score -= 20
+            reasons.append("量能不足")
+
+        if avg_amt20 >= MIN_AVG_AMOUNT_20:
+            score += 10
+        else:
+            score -= 10
+            reasons.append("成交金額不足")
+
+        if ma20 and price > ma20:
+            score += 15
+            reasons.append("站上月線")
+        else:
+            score -= 20
+            reasons.append("跌破月線")
+
+        if ma60 and price > ma60:
+            score += 12
+            reasons.append("站上季線")
+
+        if ma20 and ma60 and ma20 > ma60:
+            score += 12
+            reasons.append("月線大於季線")
+
+        if ch20 > 5:
+            score += 10
+        if ch60 > 8:
+            score += 10
+
+        if high60 and price >= high60 * 0.96:
+            score += 12
+            reasons.append("接近60日前高")
+
+        if ch5 > 22 or ch20 > 45:
+            score -= 30
+            reasons.append("短線過熱")
+
+        return {
+            "rough_score": round2(score),
+            "rough_reasons": reasons,
+            "rough_price": round2(price),
+            "rough_avg_amount_20": round2(avg_amt20),
+            "rough_ch20": round2(ch20),
+            "rough_ch60": round2(ch60),
+        }
+
+    except Exception as e:
+        print("quick_rough_score failed", e)
+        return None
+
+
 def scan_market():
     save_scan_status("running", "正在建立全市場股票池。")
-    stocks=get_stock_pool(); logs=load_trade_log(); feedback=strategy_feedback(logs); market=market_status(); analyzed=[]; amap={}; total=len(stocks)
-    save_scan_status("running", f"股票池建立完成：{total} 檔，開始掃描個股。")
-    for i,(sym,info) in enumerate(stocks.items(),1):
-        try:
-            name=info.get("name",sym); industry=info.get("industry","其他"); sector=infer_sector(sym,name,industry); df=download_stock(sym,"1y"); res=analyze_stock(df)
-            if not res: continue
-            item={"symbol":sym,"name":name,"industry":industry,"sector":sector,"df":df}; item.update(res); analyzed.append(item); amap[sym]=item
-            if i%100==0: save_scan_status("running", f"正在掃描全市場：{i}/{total}")
-            time.sleep(0.02)
-        except Exception as e: print("scan one failed",sym,e)
-    ss=sector_scores(analyzed); ls={sec:leader_strength(sec,amap) for sec in ss}; ranks=sector_rankings(ss,ls)
-    rank_map={x["sector"]:x["rank"] for x in ranks}; cs_map={x["sector"]:x["combined_sector_score"] for x in ranks}
-    for item in analyzed:
-        item.update(ss.get(item["sector"],{"sector_score":0,"sector_status":"弱勢族群","sector_avg_5d":0,"sector_avg_20d":0,"sector_avg_main":0,"sector_strong_ratio":0,"sector_stock_count":0}))
-        item.update(ls.get(item["sector"],{"leader_score":0,"leader_status":"無明確龍頭資料","leader_names":"-"}))
-        item["sector_rank"]=rank_map.get(item["sector"],999); item["combined_sector_score"]=cs_map.get(item["sector"],item.get("sector_score",0)); item["market_status"]=market["market_status"]
-        item["score"]=round2(item.get("technical_score",0)+item.get("combined_sector_score",0)+item.get("leader_score",0)*0.3+market["market_score"])
-    analyzed=add_sector_relative_rank(analyzed); final=[]
-    for item in analyzed:
-        item["score"]=round2(item.get("score",0)+item.get("sector_relative_score",0)); bt,es,er=entry_status(item); item["buy_type"]=bt; item["entry_status"]=es; item["entry_reason"]=er
-        item.update(trade_plan(item)); item.update(position_sizing(item,market)); item.update(open_execution(item.get("df"),item)); item["score"]=round2(item.get("score",0)+item.get("execution_score",0)*0.5)
-        item["level"]="S" if item["score"]>=245 and item.get("main_score",0)>=50 and item.get("combined_sector_score",0)>=25 else "A"
-        item=apply_feedback(item,feedback); level=classify(item)
-        if not level: continue
-        item["level"]=level; item=apply_feedback(item,feedback)
-        if not market["allow_new_positions"]:
-            item["entry_status"]="禁止新倉"; item["entry_reason"]=market["risk_note"]; item["ai_next_action"]="大盤風險偏高，禁止新倉"; item["execution_action"]="禁止新倉"
-        item.pop("df",None); final.append(item)
-    final=sorted(final,key=lambda x:(x.get("level")=="S",x.get("execution_action")=="可試單",x.get("risk_reward",0),x.get("feedback_score",0),x.get("score",0)),reverse=True)
-    cand=update_candidate_pool(final); cand_list=list(cand.get("candidates",{}).values())[:MAX_CANDIDATE_DISPLAY]; alerts=cand.get("entry_alerts",[])
-    data={"updated_at":taiwan_now(),**market,"stock_pool_count":total,"s_count":len([x for x in final if x.get("level")=="S"]),"a_count":len([x for x in final if x.get("level")=="A"]),"sector_rankings":ranks,"candidate_count":len(cand_list),"candidate_pool":cand_list,"entry_alerts":alerts,"strategy_feedback":feedback}
-    save_scan_results(data); save_scan_status("done", f"掃描完成：股票池 {total} 檔，S級 {data['s_count']} 檔，A級候選 {data['a_count']} 檔，進場提醒 {len(alerts)} 檔。")
 
+    stocks = get_stock_pool()
+    logs = load_trade_log()
+    feedback = strategy_feedback(logs)
+    market = market_status()
+    total = len(stocks)
+
+    save_scan_status(
+        "running",
+        f"股票池建立完成：{total} 檔。省資源模式：{'啟用' if ENABLE_RESOURCE_SAVING_SCAN else '關閉'}。"
+    )
+
+    rough_rows = []
+
+    # 第一層：全市場粗篩
+    if ENABLE_RESOURCE_SAVING_SCAN:
+        save_scan_status("running", f"第一層粗篩：開始掃描全市場 {total} 檔。")
+        for i, (sym, info) in enumerate(stocks.items(), 1):
+            try:
+                name = info.get("name", sym)
+                industry = info.get("industry", "其他")
+                sector = infer_sector(sym, name, industry)
+                df = download_stock(sym, "6mo")
+                rough = quick_rough_score(df)
+
+                if not rough:
+                    continue
+
+                row = {
+                    "symbol": sym,
+                    "name": name,
+                    "industry": industry,
+                    "sector": sector,
+                }
+                row.update(rough)
+
+                if row.get("rough_score", 0) >= ROUGH_SCAN_MIN_SCORE:
+                    rough_rows.append(row)
+
+                if i % 100 == 0:
+                    save_scan_status(
+                        "running",
+                        f"第一層粗篩中：{i}/{total}，目前通過粗篩 {len(rough_rows)} 檔。"
+                    )
+
+                time.sleep(ROUGH_ANALYSIS_SLEEP)
+
+            except Exception as e:
+                print("rough scan failed", sym, e)
+
+        rough_rows = sorted(rough_rows, key=lambda x: x.get("rough_score", 0), reverse=True)
+        detail_targets = rough_rows[:ROUGH_SCAN_TOP_N]
+
+        save_scan_status(
+            "running",
+            f"第一層粗篩完成：通過 {len(rough_rows)} 檔，進入第二層細算 {len(detail_targets)} 檔。"
+        )
+
+    else:
+        detail_targets = [
+            {
+                "symbol": sym,
+                "name": info.get("name", sym),
+                "industry": info.get("industry", "其他"),
+                "sector": infer_sector(sym, info.get("name", sym), info.get("industry", "其他")),
+                "rough_score": 0,
+                "rough_reasons": [],
+            }
+            for sym, info in stocks.items()
+        ]
+
+    # 第二層：只針對粗篩後的股票做完整 AI 細算
+    analyzed = []
+    amap = {}
+    detail_total = len(detail_targets)
+
+    for i, info in enumerate(detail_targets, 1):
+        sym = info.get("symbol")
+        try:
+            name = info.get("name", sym)
+            industry = info.get("industry", "其他")
+            sector = info.get("sector") or infer_sector(sym, name, industry)
+
+            df = download_stock(sym, "1y")
+            res = analyze_stock(df)
+
+            if not res:
+                continue
+
+            item = {
+                "symbol": sym,
+                "name": name,
+                "industry": industry,
+                "sector": sector,
+                "df": df,
+                "rough_score": info.get("rough_score", 0),
+                "rough_reasons": info.get("rough_reasons", []),
+            }
+
+            item.update(res)
+            analyzed.append(item)
+            amap[sym] = item
+
+            if i % 50 == 0:
+                save_scan_status("running", f"第二層細算中：{i}/{detail_total}")
+
+            time.sleep(DETAILED_ANALYSIS_SLEEP)
+
+        except Exception as e:
+            print("detail scan failed", sym, e)
+
+    ss = sector_scores(analyzed)
+    ls = {sec: leader_strength(sec, amap) for sec in ss}
+    ranks = sector_rankings(ss, ls)
+
+    rank_map = {x["sector"]: x["rank"] for x in ranks}
+    cs_map = {x["sector"]: x["combined_sector_score"] for x in ranks}
+
+    for item in analyzed:
+        item.update(
+            ss.get(
+                item["sector"],
+                {
+                    "sector_score": 0,
+                    "sector_status": "弱勢族群",
+                    "sector_avg_5d": 0,
+                    "sector_avg_20d": 0,
+                    "sector_avg_main": 0,
+                    "sector_strong_ratio": 0,
+                    "sector_stock_count": 0,
+                },
+            )
+        )
+        item.update(
+            ls.get(
+                item["sector"],
+                {"leader_score": 0, "leader_status": "無明確龍頭資料", "leader_names": "-"},
+            )
+        )
+
+        item["sector_rank"] = rank_map.get(item["sector"], 999)
+        item["combined_sector_score"] = cs_map.get(item["sector"], item.get("sector_score", 0))
+        item["market_status"] = market["market_status"]
+        item["score"] = round2(
+            item.get("technical_score", 0)
+            + item.get("combined_sector_score", 0)
+            + item.get("leader_score", 0) * 0.3
+            + market["market_score"]
+            + item.get("rough_score", 0) * 0.15
+        )
+
+    analyzed = add_sector_relative_rank(analyzed)
+
+    final = []
+
+    for item in analyzed:
+        item["score"] = round2(item.get("score", 0) + item.get("sector_relative_score", 0))
+
+        bt, es, er = entry_status(item)
+        item["buy_type"] = bt
+        item["entry_status"] = es
+        item["entry_reason"] = er
+
+        item.update(trade_plan(item))
+        item.update(position_sizing(item, market))
+        item.update(open_execution(item.get("df"), item))
+
+        item["score"] = round2(item.get("score", 0) + item.get("execution_score", 0) * 0.5)
+        item["level"] = "S" if item["score"] >= 245 and item.get("main_score", 0) >= 50 and item.get("combined_sector_score", 0) >= 25 else "A"
+
+        item = apply_feedback(item, feedback)
+        level = classify(item)
+
+        if not level:
+            continue
+
+        item["level"] = level
+        item = apply_feedback(item, feedback)
+
+        if not market["allow_new_positions"]:
+            item["entry_status"] = "禁止新倉"
+            item["entry_reason"] = market["risk_note"]
+            item["ai_next_action"] = "大盤風險偏高，禁止新倉"
+            item["execution_action"] = "禁止新倉"
+
+        item.pop("df", None)
+        final.append(item)
+
+    final = sorted(
+        final,
+        key=lambda x: (
+            x.get("level") == "S",
+            x.get("execution_action") == "可試單",
+            x.get("risk_reward", 0),
+            x.get("feedback_score", 0),
+            x.get("score", 0),
+        ),
+        reverse=True,
+    )
+
+    cand = update_candidate_pool(final)
+    cand_list = list(cand.get("candidates", {}).values())[:MAX_CANDIDATE_DISPLAY]
+    alerts = cand.get("entry_alerts", [])
+
+    data = {
+        "updated_at": taiwan_now(),
+        **market,
+        "resource_saving_scan": ENABLE_RESOURCE_SAVING_SCAN,
+        "rough_scan_total": len(rough_rows) if ENABLE_RESOURCE_SAVING_SCAN else total,
+        "detailed_scan_total": detail_total,
+        "stock_pool_count": total,
+        "s_count": len([x for x in final if x.get("level") == "S"]),
+        "a_count": len([x for x in final if x.get("level") == "A"]),
+        "sector_rankings": ranks,
+        "candidate_count": len(cand_list),
+        "candidate_pool": cand_list,
+        "entry_alerts": alerts,
+        "strategy_feedback": feedback,
+    }
+
+    save_scan_results(data)
+
+    save_scan_status(
+        "done",
+        f"掃描完成：全市場 {total} 檔，粗篩 {data['rough_scan_total']} 檔，細算 {detail_total} 檔，"
+        f"S級 {data['s_count']} 檔，A級候選 {data['a_count']} 檔，進場提醒 {len(alerts)} 檔。"
+    )
 
 @app.route("/")
 def index():
@@ -1584,27 +1840,69 @@ def close_trade(symbol):
 
 def scheduled_scan():
     global is_scanning
-    if is_scanning: return
-    is_scanning=True
-    try: scan_market()
-    except Exception as e: save_scan_status("error", f"排程掃描失敗：{e}"); print("排程掃描失敗",e)
-    finally: is_scanning=False
+
+    now = datetime.now(TZ)
+
+    # 省資源排程版：只在週一～週五執行全市場掃描
+    # weekday(): 0=星期一, 6=星期日
+    if now.weekday() >= 5:
+        save_scan_status("skip", "今天是假日，省資源模式略過全市場掃描。")
+        return
+
+    if is_scanning:
+        return
+
+    is_scanning = True
+
+    try:
+        scan_market()
+    except Exception as e:
+        save_scan_status("error", f"排程掃描失敗：{e}")
+        print("排程掃描失敗", e)
+    finally:
+        is_scanning = False
 
 
 scheduler = BackgroundScheduler(timezone=TZ)
-scheduler.add_job(scheduled_scan, trigger="cron", hour=16, minute=0, id="daily_market_scan", replace_existing=True)
 
-# LINE通知排程：
-# 09:10 開盤後持股狀態
-# 13:20 收盤前風控提醒
-# 16:05 盤後持股狀態 + 進場提醒
+# =====================================================
+# 省資源排程版
+# =====================================================
+# 週一～週五 16:05：只做一次全市場掃描
+# 週六、週日不掃描，避免 Railway 額度浪費。
+scheduler.add_job(
+    scheduled_scan,
+    trigger="cron",
+    day_of_week="mon-fri",
+    hour=16,
+    minute=5,
+    id="daily_market_scan",
+    replace_existing=True
+)
 
-# 09:10 開盤監測：檢查昨晚觀察池是否進入區間、開太高不追、跳空跌破不進
-# 13:20 收盤前決策：持股風控 + 是否仍符合計畫可試單
-# 16:05 盤後交易計畫：整理明日觀察清單與進場區間
-scheduler.add_job(lambda: send_line_notification("open"), trigger="cron", hour=9, minute=10, id="line_open_watch_0910", replace_existing=True)
-scheduler.add_job(lambda: send_line_notification("preclose"), trigger="cron", hour=13, minute=20, id="line_preclose_1320", replace_existing=True)
-scheduler.add_job(lambda: send_line_notification("nextday"), trigger="cron", hour=16, minute=5, id="line_nextday_1605", replace_existing=True)
+# 週一～週五 09:10：LINE 持股風控提醒
+# 不掃全市場，只檢查已追蹤持股。
+scheduler.add_job(
+    lambda: send_line_notification("open"),
+    trigger="cron",
+    day_of_week="mon-fri",
+    hour=9,
+    minute=10,
+    id="line_open_watch_0910",
+    replace_existing=True
+)
+
+# 週一～週五 13:20：LINE 可進場試單提醒
+# 不掃全市場，只讀取候選池 / 進場提醒。
+scheduler.add_job(
+    lambda: send_line_notification("preclose"),
+    trigger="cron",
+    day_of_week="mon-fri",
+    hour=13,
+    minute=20,
+    id="line_preclose_1320",
+    replace_existing=True
+)
 
 scheduler.start()
 
