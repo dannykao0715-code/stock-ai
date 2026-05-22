@@ -15,6 +15,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
+APP_VERSION_NAME = "省資源LINE簡化重新整理版_2026-05-22"
+
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
 TZ = ZoneInfo("Asia/Taipei")
@@ -1362,8 +1364,7 @@ def line_preclose():
 
 @app.route("/line-nextday")
 def line_nextday():
-    ok, info = send_line_notification("nextday")
-    save_scan_status("done" if ok else "error", info)
+    save_scan_status("done", "16:05隔日交易計畫LINE推播已關閉。此版本只保留09:10持股風控與13:20可試單提醒。")
     return redirect(url_for("index"))
 
 
@@ -1861,6 +1862,7 @@ def scheduled_scan():
         print("排程掃描失敗", e)
     finally:
         is_scanning = False
+
 
 
 scheduler = BackgroundScheduler(timezone=TZ)
