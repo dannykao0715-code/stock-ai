@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理正式驗證版_2026-05-22"
+APP_VERSION_NAME = "AI交易助理正式驗證自我優化版_2026-05-22"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -30,6 +30,8 @@ CANDIDATE_FILE = "candidate_pool.json"
 LINE_USER_FILE = "line_user.json"
 LINE_NOTIFY_LOG_FILE = "line_notify_log.json"
 SIGNAL_DATABASE_FILE = "signal_database.json"
+STRATEGY_WEIGHTS_FILE = "strategy_weights.json"
+OPTIMIZATION_LOG_FILE = "optimization_log.json"
 
 FULL_MARKET_MIN_COUNT = 1700
 MAX_ENTRY_ALERTS = 8
@@ -48,6 +50,19 @@ MIN_FEEDBACK_SAMPLE = 3
 VALIDATION_MODE = os.getenv("VALIDATION_MODE", "1") == "1"
 MAX_VALIDATION_POSITION_TEXT = "小部位試單"
 MIN_AI_CONFIDENCE_TO_NOTIFY = int(os.getenv("MIN_AI_CONFIDENCE_TO_NOTIFY", "75"))
+
+# =====================================================
+# AI自我優化模組設定
+# =====================================================
+# 累積資料不足時只統計，不亂調整。
+AUTO_OPTIMIZATION_ENABLED = os.getenv("AUTO_OPTIMIZATION_ENABLED", "1") == "1"
+OPTIMIZE_SUGGEST_AFTER = int(os.getenv("OPTIMIZE_SUGGEST_AFTER", "30"))
+OPTIMIZE_SMALL_AFTER = int(os.getenv("OPTIMIZE_SMALL_AFTER", "100"))
+OPTIMIZE_MEDIUM_AFTER = int(os.getenv("OPTIMIZE_MEDIUM_AFTER", "200"))
+OPTIMIZE_MIN_GROUP_COUNT = int(os.getenv("OPTIMIZE_MIN_GROUP_COUNT", "8"))
+OPTIMIZE_TARGET_RETURN_KEY = os.getenv("OPTIMIZE_TARGET_RETURN_KEY", "return_5d_pct")
+OPTIMIZE_MAX_WEIGHT = float(os.getenv("OPTIMIZE_MAX_WEIGHT", "20"))
+OPTIMIZE_MIN_WEIGHT = float(os.getenv("OPTIMIZE_MIN_WEIGHT", "-20"))
 
 # =====================================================
 # 省資源掃描模式設定
@@ -1180,8 +1195,303 @@ def signal_summary_text():
         f"5日結果：{len(done5)} 筆｜平均報酬 {avg_return(done5, 'return_5d_pct')}%｜勝率 {win_rate(done5, 'return_5d_pct')}%\\n"
         f"10日結果：{len(done10)} 筆｜平均報酬 {avg_return(done10, 'return_10d_pct')}%｜勝率 {win_rate(done10, 'return_10d_pct')}%\\n"
         f"\\n"
-        f"提醒：目前先跑1～2個月收集資料，不以此結果直接保證獲利。"
+        f"自我優化狀態：{load_strategy_weights().get('mode', 'collecting')}｜可統計樣本 {load_strategy_weights().get('entry_count', 0)} 筆\\n"\
+        f"提醒：目前先跑100～200筆收集資料，不以此結果直接保證獲利。"
     )
+
+
+def default_strategy_weights():
+    return {
+        "updated_at": taiwan_now(),
+        "mode": "collecting",
+        "entry_count": 0,
+        "weights": {
+            "buy_type": {},
+            "sector": {},
+            "level": {},
+            "risk_reward_group": {},
+            "market_status": {},
+        },
+        "stats": {},
+        "suggestions": [],
+    }
+
+
+def load_strategy_weights():
+    return read_json(STRATEGY_WEIGHTS_FILE, default_strategy_weights())
+
+
+def save_strategy_weights(data):
+    data["updated_at"] = taiwan_now()
+    write_json(STRATEGY_WEIGHTS_FILE, data)
+
+
+def load_optimization_log():
+    return read_json(OPTIMIZATION_LOG_FILE, [])
+
+
+def save_optimization_log(rows):
+    write_json(OPTIMIZATION_LOG_FILE, rows[-200:])
+
+
+def rr_group(value):
+    v = safe_float(value, 0)
+    if v >= 3:
+        return "RR>=3"
+    if v >= 2:
+        return "RR 2~3"
+    if v >= 1.5:
+        return "RR 1.5~2"
+    if v > 0:
+        return "RR<1.5"
+    return "RR未知"
+
+
+def signal_group_value(rec, key):
+    if key == "risk_reward_group":
+        return rr_group(rec.get("risk_reward"))
+    return rec.get(key) or "未分類"
+
+
+def summarize_group_performance(entries, key):
+    groups = {}
+
+    for rec in entries:
+        result = rec.get("result", {})
+        if result.get(OPTIMIZE_TARGET_RETURN_KEY) is None:
+            continue
+
+        name = signal_group_value(rec, key)
+        groups.setdefault(name, []).append(rec)
+
+    rows = []
+
+    for name, arr in groups.items():
+        vals = [safe_float(x.get("result", {}).get(OPTIMIZE_TARGET_RETURN_KEY, 0)) for x in arr]
+        max_down = [safe_float(x.get("result", {}).get("max_down_5d_pct", 0)) for x in arr if x.get("result", {}).get("max_down_5d_pct") is not None]
+        hit_stop = [x for x in arr if x.get("result", {}).get("hit_stop") is True]
+        hit_target = [x for x in arr if x.get("result", {}).get("hit_target") is True]
+        count = len(vals)
+
+        if not count:
+            continue
+
+        rows.append({
+            "group_key": key,
+            "group_name": name,
+            "count": count,
+            "win_rate": round2(len([v for v in vals if v > 0]) / count * 100),
+            "avg_return": round2(sum(vals) / count),
+            "avg_max_down": round2(sum(max_down) / len(max_down)) if max_down else 0,
+            "hit_stop_rate": round2(len(hit_stop) / count * 100),
+            "hit_target_rate": round2(len(hit_target) / count * 100),
+        })
+
+    return sorted(rows, key=lambda x: (x["avg_return"], x["win_rate"], x["count"]), reverse=True)
+
+
+def decide_weight_adjustment(row, total_entries):
+    """
+    回傳權重調整值。
+    樣本不足只建議，不自動大幅調整。
+    """
+    count = row.get("count", 0)
+    win_rate = safe_float(row.get("win_rate", 0))
+    avg_return = safe_float(row.get("avg_return", 0))
+    hit_stop_rate = safe_float(row.get("hit_stop_rate", 0))
+
+    if count < OPTIMIZE_MIN_GROUP_COUNT:
+        return 0, "樣本不足，暫不調整"
+
+    # 30~99筆：只建議，不套用
+    if total_entries < OPTIMIZE_SMALL_AFTER:
+        if win_rate >= 60 and avg_return > 1:
+            return 0, "表現佳，建議未來加權"
+        if win_rate <= 42 and avg_return < 0:
+            return 0, "表現弱，建議未來降權"
+        return 0, "觀察中"
+
+    # 100~199筆：小幅自動調整
+    step_good = 5
+    step_bad = -5
+
+    # 200筆以上：中度自動調整
+    if total_entries >= OPTIMIZE_MEDIUM_AFTER:
+        step_good = 8
+        step_bad = -8
+
+    if win_rate >= 62 and avg_return >= 1.2:
+        return step_good, "勝率與平均報酬佳，自動加權"
+    if win_rate >= 56 and avg_return >= 0.8 and hit_stop_rate < 35:
+        return round2(step_good * 0.6), "表現穩定，小幅加權"
+    if win_rate <= 42 and avg_return <= 0:
+        return step_bad, "勝率低且報酬不佳，自動降權"
+    if hit_stop_rate >= 55 and avg_return < 0.5:
+        return step_bad, "停損命中率偏高，自動降權"
+
+    return 0, "暫不調整"
+
+
+def optimize_strategy_weights():
+    """
+    AI自我優化模組：
+    - 30筆前：只收集
+    - 30~99筆：產生建議
+    - 100~199筆：小幅自動調整
+    - 200筆以上：中度自動調整
+    """
+    if not AUTO_OPTIMIZATION_ENABLED:
+        return load_strategy_weights()
+
+    evaluate_signal_database()
+
+    db = load_signal_database()
+    signals = db.get("signals", [])
+    entries = [
+        x for x in signals
+        if x.get("signal_type") == "entry"
+        and x.get("result", {}).get(OPTIMIZE_TARGET_RETURN_KEY) is not None
+    ]
+
+    total = len(entries)
+    data = load_strategy_weights()
+    weights = data.get("weights", default_strategy_weights()["weights"])
+
+    if total < OPTIMIZE_SUGGEST_AFTER:
+        data.update({
+            "mode": "collecting",
+            "entry_count": total,
+            "stats": {},
+            "suggestions": [f"目前有效樣本 {total} 筆，未滿 {OPTIMIZE_SUGGEST_AFTER} 筆，只收集不優化。"],
+        })
+        save_strategy_weights(data)
+        return data
+
+    all_stats = {}
+    suggestions = []
+    changes = []
+
+    for key in ["buy_type", "sector", "level", "risk_reward_group", "market_status"]:
+        rows = summarize_group_performance(entries, key)
+        all_stats[key] = rows
+
+        for row in rows:
+            delta, reason = decide_weight_adjustment(row, total)
+            name = row["group_name"]
+
+            if total >= OPTIMIZE_SMALL_AFTER and delta != 0:
+                old = safe_float(weights.setdefault(key, {}).get(name, 0))
+                new = max(OPTIMIZE_MIN_WEIGHT, min(OPTIMIZE_MAX_WEIGHT, old + delta))
+                weights[key][name] = round2(new)
+
+                changes.append({
+                    "time": taiwan_now(),
+                    "group_key": key,
+                    "group_name": name,
+                    "old_weight": old,
+                    "new_weight": round2(new),
+                    "delta": delta,
+                    "reason": reason,
+                    "count": row.get("count"),
+                    "win_rate": row.get("win_rate"),
+                    "avg_return": row.get("avg_return"),
+                })
+
+            if row.get("count", 0) >= OPTIMIZE_MIN_GROUP_COUNT:
+                suggestions.append(
+                    f"{key}:{name}｜{row.get('count')}筆｜勝率{row.get('win_rate')}%｜"
+                    f"均報{row.get('avg_return')}%｜{reason}"
+                )
+
+    mode = "suggestion_only"
+    if total >= OPTIMIZE_MEDIUM_AFTER:
+        mode = "medium_auto"
+    elif total >= OPTIMIZE_SMALL_AFTER:
+        mode = "small_auto"
+
+    data.update({
+        "mode": mode,
+        "entry_count": total,
+        "weights": weights,
+        "stats": all_stats,
+        "suggestions": suggestions[:30],
+        "last_optimized_at": taiwan_now(),
+    })
+
+    save_strategy_weights(data)
+
+    if changes:
+        log = load_optimization_log()
+        log.extend(changes)
+        save_optimization_log(log)
+
+    return data
+
+
+def adaptive_weight_score(item):
+    """
+    把已驗證出來的高勝率條件加入分數。
+    權重來源：strategy_weights.json
+    """
+    data = load_strategy_weights()
+    weights = data.get("weights", {})
+    total = safe_int(data.get("entry_count", 0))
+
+    # 樣本數未滿100前，不真正影響選股，只統計與建議。
+    if total < OPTIMIZE_SMALL_AFTER:
+        return 0, []
+
+    score = 0
+    notes = []
+
+    mapping = {
+        "buy_type": item.get("buy_type", "未分類"),
+        "sector": item.get("sector", "未分類"),
+        "level": item.get("level", "未分類"),
+        "risk_reward_group": rr_group(item.get("risk_reward")),
+        "market_status": item.get("market_status", "未分類"),
+    }
+
+    for key, value in mapping.items():
+        w = safe_float(weights.get(key, {}).get(value, 0))
+        if w:
+            score += w
+            notes.append(f"{key}:{value} {w:+}")
+
+    return round2(score), notes
+
+
+def optimization_summary_text():
+    data = optimize_strategy_weights()
+    weights = data.get("weights", {})
+    suggestions = data.get("suggestions", [])
+    mode = data.get("mode", "collecting")
+    count = data.get("entry_count", 0)
+
+    rows = [
+        "AI自我優化模組",
+        f"模式：{mode}",
+        f"可統計進場樣本：{count} 筆",
+        "",
+        "目前權重：",
+    ]
+
+    for key, mp in weights.items():
+        if not mp:
+            continue
+        rows.append(f"\n[{key}]")
+        for name, val in sorted(mp.items(), key=lambda kv: safe_float(kv[1]), reverse=True)[:10]:
+            rows.append(f"{name}: {val:+}")
+
+    rows.append("\n優化建議：")
+    if suggestions:
+        rows.extend(suggestions[:20])
+    else:
+        rows.append("目前樣本不足，先持續收集資料。")
+
+    return "\n".join(rows)
+
+
 
 def classify_holding_line_action(t):
     status = t.get("ai_holding_status", "")
@@ -1437,6 +1747,9 @@ def format_line_preclose_decision():
         if a.get("sector_rank", 999) and safe_float(a.get("sector_rank", 999)) <= 5:
             confidence += 5
 
+        adaptive_score, adaptive_notes = adaptive_weight_score(a)
+        confidence += int(max(-10, min(10, adaptive_score / 2)))
+
         confidence = min(confidence, 95)
 
         # 正式驗證期：就算信心高，也只給小部位試單文字，不給重倉建議。
@@ -1461,6 +1774,8 @@ def format_line_preclose_decision():
                 "current_status": a.get("current_status", "-"),
                 "execution_action": a.get("execution_action", "-"),
                 "validation_mode": VALIDATION_MODE,
+                "adaptive_score": adaptive_score,
+                "adaptive_notes": adaptive_notes,
             },
         )
 
@@ -1599,12 +1914,26 @@ def line_nextday():
 
 
 
+
+@app.route("/optimization-summary")
+def optimization_summary():
+    return Response(optimization_summary_text(), mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/strategy-weights")
+def strategy_weights():
+    return load_strategy_weights()
+
+
 @app.route("/version")
 def version():
     return {
         "version": APP_VERSION_NAME,
         "validation_mode": VALIDATION_MODE,
         "resource_saving_scan": ENABLE_RESOURCE_SAVING_SCAN,
+        "auto_optimization": AUTO_OPTIMIZATION_ENABLED,
+        "optimization_mode": load_strategy_weights().get("mode", "collecting"),
+        "optimization_samples": load_strategy_weights().get("entry_count", 0),
         "line_notify": {
             "09:10": "AI持股監控，只通知A/B/C級",
             "13:20": "AI進場指令，只通知C級可試單",
@@ -1784,6 +2113,7 @@ def scan_market():
     stocks = get_stock_pool()
     logs = load_trade_log()
     feedback = strategy_feedback(logs)
+    optimize_strategy_weights()
     market = market_status()
     total = len(stocks)
 
@@ -1947,7 +2277,11 @@ def scan_market():
         item.update(position_sizing(item, market))
         item.update(open_execution(item.get("df"), item))
 
-        item["score"] = round2(item.get("score", 0) + item.get("execution_score", 0) * 0.5)
+        adaptive_score, adaptive_notes = adaptive_weight_score(item)
+        item["adaptive_score"] = adaptive_score
+        item["adaptive_notes"] = adaptive_notes
+
+        item["score"] = round2(item.get("score", 0) + item.get("execution_score", 0) * 0.5 + adaptive_score)
         item["level"] = "S" if item["score"] >= 245 and item.get("main_score", 0) >= 50 and item.get("combined_sector_score", 0) >= 25 else "A"
 
         item = apply_feedback(item, feedback)
@@ -2112,6 +2446,7 @@ def scheduled_scan():
     try:
         scan_market()
         evaluate_signal_database()
+        optimize_strategy_weights()
     except Exception as e:
         save_scan_status("error", f"排程掃描失敗：{e}")
         print("排程掃描失敗", e)
