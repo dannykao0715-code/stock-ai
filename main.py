@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理正式驗證自我優化版_2026-05-22"
+APP_VERSION_NAME = "AI交易助理正式驗證自我優化_OPENAI分析版_2026-05-22"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -32,6 +32,7 @@ LINE_NOTIFY_LOG_FILE = "line_notify_log.json"
 SIGNAL_DATABASE_FILE = "signal_database.json"
 STRATEGY_WEIGHTS_FILE = "strategy_weights.json"
 OPTIMIZATION_LOG_FILE = "optimization_log.json"
+AI_STRATEGY_REPORT_FILE = "ai_strategy_report.json"
 
 FULL_MARKET_MIN_COUNT = 1700
 MAX_ENTRY_ALERTS = 8
@@ -75,6 +76,10 @@ ROUGH_SCAN_MIN_SCORE = float(os.getenv("ROUGH_SCAN_MIN_SCORE", "15"))
 DETAILED_ANALYSIS_SLEEP = float(os.getenv("DETAILED_ANALYSIS_SLEEP", "0.01"))
 ROUGH_ANALYSIS_SLEEP = float(os.getenv("ROUGH_ANALYSIS_SLEEP", "0.005"))
 DATA_CACHE_DIR = os.getenv("DATA_CACHE_DIR", "data_cache")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_ANALYSIS_ENABLED = os.getenv("OPENAI_ANALYSIS_ENABLED", "1") == "1"
 
 is_scanning = False
 
@@ -1915,6 +1920,228 @@ def line_nextday():
 
 
 
+
+def load_ai_strategy_report():
+    return read_json(AI_STRATEGY_REPORT_FILE, {
+        "updated_at": "-",
+        "status": "尚未產生",
+        "model": OPENAI_MODEL,
+        "report": "目前尚未產生 OpenAI 策略分析報告。",
+        "samples": 0,
+    })
+
+
+def save_ai_strategy_report(data):
+    data["updated_at"] = taiwan_now()
+    write_json(AI_STRATEGY_REPORT_FILE, data)
+
+
+def extract_openai_text(resp_json):
+    if not isinstance(resp_json, dict):
+        return ""
+
+    if resp_json.get("output_text"):
+        return resp_json.get("output_text", "")
+
+    texts = []
+
+    for item in resp_json.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            if isinstance(content, dict):
+                if content.get("text"):
+                    texts.append(content.get("text"))
+                elif content.get("type") == "output_text" and content.get("text"):
+                    texts.append(content.get("text"))
+
+    return "\n".join(texts).strip()
+
+
+def compact_signal_rows(limit=120):
+    db = load_signal_database()
+    signals = db.get("signals", [])
+    entries = [x for x in signals if x.get("signal_type") == "entry"]
+    rows = []
+
+    for x in entries[-limit:]:
+        result = x.get("result", {})
+        rows.append({
+            "date": x.get("date"),
+            "symbol": x.get("short_symbol", x.get("symbol")),
+            "name": x.get("name"),
+            "level": x.get("level"),
+            "buy_type": x.get("buy_type"),
+            "sector": x.get("sector"),
+            "risk_reward": x.get("risk_reward"),
+            "confidence": x.get("confidence"),
+            "price": x.get("price"),
+            "entry_low": x.get("entry_low"),
+            "entry_high": x.get("entry_high"),
+            "stop": x.get("stop"),
+            "market_status": x.get("market_status"),
+            "return_3d_pct": result.get("return_3d_pct"),
+            "return_5d_pct": result.get("return_5d_pct"),
+            "return_10d_pct": result.get("return_10d_pct"),
+            "max_up_5d_pct": result.get("max_up_5d_pct"),
+            "max_down_5d_pct": result.get("max_down_5d_pct"),
+            "hit_stop": result.get("hit_stop"),
+            "hit_target": result.get("hit_target"),
+        })
+
+    return rows
+
+
+def build_ai_strategy_payload():
+    db = load_signal_database()
+    signals = db.get("signals", [])
+    entries = [x for x in signals if x.get("signal_type") == "entry"]
+    report = {
+        "version": APP_VERSION_NAME,
+        "generated_at": taiwan_now(),
+        "signal_summary": signal_summary_text(),
+        "optimization_summary": optimization_summary_text(),
+        "strategy_weights": load_strategy_weights(),
+        "latest_entry_signals": compact_signal_rows(120),
+        "total_entry_signals": len(entries),
+        "instruction": (
+            "請站在中立、保守、風控優先的角度分析這套台股AI交易助理。"
+            "重點判斷：目前樣本是否足夠、哪些買點/族群/風報比/等級看起來較有效、哪些應降權重、"
+            "是否有過度擬合風險、下一階段應該觀察什麼。"
+            "請不要保證獲利，不要叫使用者重倉。"
+        ),
+    }
+    return report
+
+
+def generate_openai_strategy_report(manual=False):
+    if not OPENAI_ANALYSIS_ENABLED:
+        data = {
+            "status": "disabled",
+            "model": OPENAI_MODEL,
+            "samples": 0,
+            "report": "OPENAI_ANALYSIS_ENABLED 未開啟，目前不產生 OpenAI 分析報告。",
+        }
+        save_ai_strategy_report(data)
+        return data
+
+    payload = build_ai_strategy_payload()
+    samples = safe_int(payload.get("total_entry_signals", 0))
+
+    if not OPENAI_API_KEY:
+        data = {
+            "status": "missing_api_key",
+            "model": OPENAI_MODEL,
+            "samples": samples,
+            "report": (
+                "尚未設定 OPENAI_API_KEY。\n"
+                "請到 Railway Variables 新增 OPENAI_API_KEY 後重新部署。\n"
+                "設定完成後，系統會在每日盤後自動產生策略分析報告。"
+            ),
+        }
+        save_ai_strategy_report(data)
+        return data
+
+    system_prompt = (
+        "你是一位保守、重視風險控管與統計驗證的台股策略分析師。"
+        "你只負責分析資料與提出可驗證的優化建議，不提供保證獲利承諾。"
+        "請用繁體中文輸出，格式清楚，適合使用者之後貼給ChatGPT再進一步討論。"
+    )
+
+    user_prompt = (
+        "以下是我的AI交易助理系統累積資料，請產出一份策略分析報告。\n\n"
+        "請分成：\n"
+        "1. 目前樣本數與可信度\n"
+        "2. 目前看起來較有效的邏輯\n"
+        "3. 目前看起來較弱或應降低權重的邏輯\n"
+        "4. 停損、停利、風報比觀察\n"
+        "5. 是否有過度擬合風險\n"
+        "6. 建議下一階段優化方向\n"
+        "7. 給使用者的保守結論\n\n"
+        "資料如下：\n"
+        + json.dumps(payload, ensure_ascii=False, default=str)[:60000]
+    )
+
+    try:
+        res = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENAI_MODEL,
+                "input": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_output_tokens": 2200,
+            },
+            timeout=60,
+        )
+
+        if res.status_code >= 400:
+            data = {
+                "status": "error",
+                "model": OPENAI_MODEL,
+                "samples": samples,
+                "report": f"OpenAI API 呼叫失敗：HTTP {res.status_code}\n{res.text[:1000]}",
+            }
+            save_ai_strategy_report(data)
+            return data
+
+        resp_json = res.json()
+        text = extract_openai_text(resp_json)
+
+        if not text:
+            text = "OpenAI API 有回應，但沒有解析到文字內容。請檢查回傳格式。"
+
+        data = {
+            "status": "ok",
+            "model": OPENAI_MODEL,
+            "samples": samples,
+            "manual": manual,
+            "report": text,
+        }
+        save_ai_strategy_report(data)
+        return data
+
+    except Exception as e:
+        data = {
+            "status": "error",
+            "model": OPENAI_MODEL,
+            "samples": samples,
+            "report": f"產生 OpenAI 策略分析報告失敗：{e}",
+        }
+        save_ai_strategy_report(data)
+        return data
+
+
+
+
+@app.route("/ai-report")
+def ai_report():
+    data = load_ai_strategy_report()
+    text = (
+        f"OpenAI策略分析報告\n"
+        f"狀態：{data.get('status','-')}\n"
+        f"模型：{data.get('model','-')}\n"
+        f"樣本數：{data.get('samples','-')}\n"
+        f"更新時間：{data.get('updated_at','-')}\n"
+        f"\n{data.get('report','')}"
+    )
+    return Response(text, mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/ai-report-json")
+def ai_report_json():
+    return load_ai_strategy_report()
+
+
+@app.route("/generate-ai-report")
+def generate_ai_report_route():
+    generate_openai_strategy_report(manual=True)
+    return redirect(url_for("index"))
+
+
 @app.route("/optimization-summary")
 def optimization_summary():
     return Response(optimization_summary_text(), mimetype="text/plain; charset=utf-8")
@@ -1932,6 +2159,9 @@ def version():
         "validation_mode": VALIDATION_MODE,
         "resource_saving_scan": ENABLE_RESOURCE_SAVING_SCAN,
         "auto_optimization": AUTO_OPTIMIZATION_ENABLED,
+        "openai_analysis": OPENAI_ANALYSIS_ENABLED,
+        "openai_ready": bool(OPENAI_API_KEY),
+        "openai_model": OPENAI_MODEL,
         "optimization_mode": load_strategy_weights().get("mode", "collecting"),
         "optimization_samples": load_strategy_weights().get("entry_count", 0),
         "line_notify": {
@@ -2348,7 +2578,7 @@ def index():
     for t in tracks:
         updated.append(manage_holding(t, download_stock(t["symbol"],"1y")))
     save_track(updated); dash=strategy_dashboard(logs); feedback=scan.get("strategy_feedback") or strategy_feedback(logs)
-    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id())
+    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id(), openai_ready=bool(OPENAI_API_KEY), ai_report=load_ai_strategy_report())
 
 
 @app.route("/scan-now")
@@ -2447,11 +2677,16 @@ def scheduled_scan():
         scan_market()
         evaluate_signal_database()
         optimize_strategy_weights()
+        generate_openai_strategy_report()
     except Exception as e:
         save_scan_status("error", f"排程掃描失敗：{e}")
         print("排程掃描失敗", e)
     finally:
-        is_scanning = False
+        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_ANALYSIS_ENABLED = os.getenv("OPENAI_ANALYSIS_ENABLED", "1") == "1"
+
+is_scanning = False
 
 scheduler = BackgroundScheduler(timezone=TZ)
 
