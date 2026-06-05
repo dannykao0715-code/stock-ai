@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>AI實戰交易管理 + Top-Down法人選股系統｜嚴格C級＋寬鬆觀察版</title>
+<title>AI實戰交易管理 + Top-Down法人選股系統｜輕量穩定監控版</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <script>setInterval(function(){ location.reload(); }, 300000);</script>
@@ -18,7 +18,7 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <div>🌍 大盤狀態：<span class="{% if allow_new_positions %}good{% else %}bad{% endif %}">{{ market_status }}</span> ｜ 大盤位階：{{ market_egg_zone }} ｜ 前方壓力：{{ market_pressure_note }} ｜ 操作模式：<span class="warning">{{ risk_mode }}</span> ｜ 風險開關：{% if allow_new_positions %}<span class="good">{{ risk_switch }}</span>{% else %}<span class="bad">{{ risk_switch }}</span>{% endif %} ｜ 部位倍率：{{ risk_multiplier }}</div>
 <div>📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 嚴格C級：<span class="warning">{{ entry_alerts|length }}</span> 檔 ｜ 寬鬆觀察：<span class="blue">{{ loose_watch_count|default(0) }}</span> 檔 ｜ 已追蹤：<span class="warning">{{ tracks|length }}</span> 檔 ｜ AI候選：{{ candidate_count }} 檔 ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}</div>
 </div>
-<div class="mb-3"><a href="/scan-now" class="btn btn-success me-2">送出背景掃描</a><a href="/reset-scan-status" class="btn btn-danger me-2" onclick="return confirm('確定要重置掃描狀態嗎？')">重置掃描狀態</a><button onclick="location.reload()" class="btn btn-main me-2">重新整理</button><a href="/schedule-health" class="btn btn-outline-light me-2" target="_blank">排程健康檢查</a><a href="/signal-summary" class="btn btn-outline-success me-2" target="_blank">嚴格/寬鬆統計</a><a href="/line-test" class="btn btn-yellow me-2">測試LINE通知</a><a href="/line-open-watch" class="btn btn-outline-info me-2">09:10 AI持股監控</a><a href="/line-preclose" class="btn btn-outline-warning me-2">13:20 AI交易助理進場指令</a><a href="/generate-ai-report" class="btn btn-outline-light">產生OpenAI分析報告</a></div>
+<div class="mb-3"><a href="/scan-now" class="btn btn-success me-2">送出背景掃描</a><a href="/reset-scan-status" class="btn btn-danger me-2" onclick="return confirm('確定要重置掃描狀態嗎？')">重置掃描狀態</a><button onclick="location.reload()" class="btn btn-main me-2">重新整理</button><a href="/heartbeat" class="btn btn-outline-primary me-2" target="_blank">手動心跳檢查</a><a href="/system-health" class="btn btn-outline-light me-2" target="_blank">系統健康狀態</a><a href="/schedule-health" class="btn btn-outline-light me-2" target="_blank">排程健康檢查</a><a href="/signal-summary" class="btn btn-outline-success me-2" target="_blank">嚴格/寬鬆統計</a><a href="/line-test" class="btn btn-yellow me-2">測試LINE通知</a><a href="/line-open-watch" class="btn btn-outline-info me-2">09:10 AI持股監控</a><a href="/line-preclose" class="btn btn-outline-warning me-2">13:20 AI交易助理進場指令</a><a href="/generate-ai-report" class="btn btn-outline-light">產生OpenAI分析報告</a></div>
 <div class="panel"><h5>LINE通知狀態</h5><div>Token：{% if line_token_ready %}<span class="good">已設定</span>{% else %}<span class="bad">未設定</span>{% endif %} ｜ User ID：{% if line_user_ready %}<span class="good">已綁定</span>{% else %}<span class="warning">尚未綁定，請到 LINE Developers 設定 Webhook，並傳訊息給官方帳號</span>{% endif %}</div><div class="muted">Webhook URL：你的 Railway 網址 + /callback。已啟用：AI省資源掃描模式、省資源排程版、LINE簡化通知省資源版。自動推播：週一～五 09:10 AI持股監控、13:20 AI交易助理進場指令；全市場掃描為週一～五 16:05，盤後不再推播隔日交易計畫。</div></div>
 <div class="panel">
 <div class="blue">掃描狀態：{{ scan_message }}</div>
