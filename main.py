@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理正式驗證自我優化_OPENAI分析版_2026-05-22"
+APP_VERSION_NAME = "AI交易助理穩定監控_嚴格C級加寬鬆觀察版_2026-06-04"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -26,6 +26,7 @@ TRACK_FILE = "track.json"
 TRADE_LOG_FILE = "trade_log.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
+SCHEDULE_HEALTH_FILE = "schedule_health.json"
 CANDIDATE_FILE = "candidate_pool.json"
 LINE_USER_FILE = "line_user.json"
 LINE_NOTIFY_LOG_FILE = "line_notify_log.json"
@@ -80,6 +81,9 @@ DATA_CACHE_DIR = os.getenv("DATA_CACHE_DIR", "data_cache")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_ANALYSIS_ENABLED = os.getenv("OPENAI_ANALYSIS_ENABLED", "1") == "1"
+SCAN_TIMEOUT_MINUTES = int(os.getenv("SCAN_TIMEOUT_MINUTES", "90"))
+LOOSE_OBSERVATION_ENABLED = os.getenv("LOOSE_OBSERVATION_ENABLED", "1") == "1"
+LOOSE_OBSERVATION_LIMIT = int(os.getenv("LOOSE_OBSERVATION_LIMIT", "80"))
 
 is_scanning = False
 
@@ -156,13 +160,42 @@ def pct(a, b):
     return (a - b) / b * 100
 
 
+def parse_taiwan_time(value):
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+    except Exception:
+        return None
+
+
 def save_scan_status(status, message):
-    write_json(SCAN_STATUS_FILE, {"status": status, "message": message, "updated_at": taiwan_now()})
+    write_json(SCAN_STATUS_FILE, {
+        "status": status,
+        "message": message,
+        "updated_at": taiwan_now()
+    })
 
 
 def load_scan_status():
-    return read_json(SCAN_STATUS_FILE, {"status": "idle", "message": "尚未掃描", "updated_at": "-"})
+    data = read_json(SCAN_STATUS_FILE, {"status": "idle", "message": "尚未掃描", "updated_at": "-"})
+    # 如果狀態卡在 running 超過設定時間，自動改成 timeout，避免畫面永遠顯示正在掃描。
+    if data.get("status") == "running":
+        ts = parse_taiwan_time(data.get("updated_at"))
+        if ts:
+            minutes = (datetime.now(TZ) - ts).total_seconds() / 60
+            if minutes > SCAN_TIMEOUT_MINUTES:
+                data = {
+                    "status": "timeout",
+                    "message": f"掃描逾時已自動解鎖：超過 {SCAN_TIMEOUT_MINUTES} 分鐘未完成，請重新掃描。",
+                    "updated_at": taiwan_now()
+                }
+                write_json(SCAN_STATUS_FILE, data)
+    return data
 
+
+def reset_scan_status(message="已手動重置掃描狀態。"):
+    global is_scanning
+    is_scanning = False
+    save_scan_status("idle", message)
 
 def risk_reward_group(rr):
     rr = safe_float(rr)
@@ -1101,10 +1134,117 @@ def record_ai_signal(signal_type, item, action_level, action, price, note="", ex
         print("record_ai_signal failed", e)
 
 
+
+def is_strict_entry_candidate(item):
+    rr = safe_float(item.get("risk_reward", 0))
+    current_status = item.get("current_status", item.get("entry_status", "-"))
+    execution_action = item.get("execution_action", "-")
+    price = safe_float(item.get("day_close", 0)) or safe_float(item.get("price", 0))
+    entry_low = safe_float(item.get("next_entry_low", 0))
+    entry_high = safe_float(item.get("next_entry_high", 0))
+    no_entry = safe_float(item.get("no_entry_price", 0))
+
+    if current_status == "可觀察進場" and rr >= MIN_RISK_REWARD_ENTRY:
+        if execution_action in ["可試單", "可小部位試單", "等待確認"]:
+            if price and entry_low and entry_high:
+                return entry_low <= price <= entry_high and price > no_entry
+            return True
+
+    return False
+
+
+def loose_observation_reason(item):
+    rr = safe_float(item.get("risk_reward", 0))
+    current_status = item.get("current_status", item.get("entry_status", "-"))
+    execution_action = item.get("execution_action", "-")
+    price = safe_float(item.get("day_close", 0)) or safe_float(item.get("price", 0))
+    entry_low = safe_float(item.get("next_entry_low", 0))
+    entry_high = safe_float(item.get("next_entry_high", 0))
+    no_entry = safe_float(item.get("no_entry_price", 0))
+
+    if is_strict_entry_candidate(item):
+        return "嚴格C級"
+
+    if current_status in ["跌破取消", "過熱不追", "不列入", "流動性不足", "禁止新倉"]:
+        return ""
+
+    if price and no_entry and price < no_entry:
+        return "跌破不進，留作失敗/反彈觀察樣本"
+
+    if price and entry_high and price > entry_high:
+        return "高於進場區，開高不追但留作觀察樣本"
+
+    if price and entry_low and no_entry and no_entry <= price < entry_low:
+        return "未到進場區，等回採觀察樣本"
+
+    if current_status in ["等待回採", "觀察中", "尚未觸發", "可觀察進場"]:
+        return f"{current_status}，寬鬆觀察樣本"
+
+    if rr >= 1.2:
+        return "風報比接近門檻，寬鬆觀察樣本"
+
+    if item.get("level") in ["S", "A"]:
+        return "S/A級候選，寬鬆觀察樣本"
+
+    return ""
+
+
+def record_loose_observation_signals(candidates):
+    """
+    寬鬆觀察訊號：
+    不推播LINE，不當成可買進，只是為了快速累積資料庫。
+    用來比較：嚴格C級 vs 寬鬆觀察，哪一種後續表現更好。
+    """
+    if not LOOSE_OBSERVATION_ENABLED:
+        return 0
+
+    count = 0
+
+    for item in candidates[:LOOSE_OBSERVATION_LIMIT]:
+        try:
+            if is_strict_entry_candidate(item):
+                continue
+
+            reason = loose_observation_reason(item)
+            if not reason:
+                continue
+
+            price = safe_float(item.get("day_close", 0)) or safe_float(item.get("price", 0))
+            if not price:
+                # 沒有價格就不記，避免資料失真
+                continue
+
+            record_ai_signal(
+                "watch",
+                item,
+                "D",
+                "寬鬆觀察",
+                price,
+                reason,
+                extra={
+                    "strict_or_loose": "loose_watch",
+                    "current_status": item.get("current_status", item.get("entry_status", "-")),
+                    "execution_action": item.get("execution_action", "-"),
+                    "observe_reason": reason,
+                    "confidence": 0,
+                    "position_note": "只觀察，不進場",
+                },
+            )
+            count += 1
+
+        except Exception as e:
+            print("record loose watch failed", item.get("symbol"), e)
+
+    return count
+
+
+
 def evaluate_signal_database():
     """
     每次盤後掃描時更新訊號結果：
-    - 3日、5日、10日後收盤報酬
+    - 嚴格C級訊號 entry
+    - 寬鬆觀察訊號 watch
+    - 追蹤 3日、5日、10日後收盤報酬
     - 訊號後最高漲幅、最大回檔
     - 是否碰到停損 / 目標價
     """
@@ -1114,7 +1254,7 @@ def evaluate_signal_database():
         changed = False
 
         for rec in signals:
-            if rec.get("signal_type") != "entry":
+            if rec.get("signal_type") not in ["entry", "watch"]:
                 continue
 
             symbol = rec.get("symbol")
@@ -1168,42 +1308,52 @@ def evaluate_signal_database():
     except Exception as e:
         print("evaluate_signal_database failed", e)
 
-
 def signal_summary_text():
     db = load_signal_database()
     signals = db.get("signals", [])
-    entries = [x for x in signals if x.get("signal_type") == "entry"]
+    strict_entries = [x for x in signals if x.get("signal_type") == "entry"]
+    loose_watch = [x for x in signals if x.get("signal_type") == "watch"]
     holdings = [x for x in signals if x.get("signal_type") == "holding"]
 
-    done3 = [x for x in entries if x.get("result", {}).get("return_3d_pct") is not None]
-    done5 = [x for x in entries if x.get("result", {}).get("return_5d_pct") is not None]
-    done10 = [x for x in entries if x.get("result", {}).get("return_10d_pct") is not None]
+    def done(rows, key):
+        return [x for x in rows if x.get("result", {}).get(key) is not None]
 
     def avg_return(rows, key):
+        rows = done(rows, key)
         if not rows:
             return 0
         return round2(sum(safe_float(x.get("result", {}).get(key, 0)) for x in rows) / len(rows))
 
     def win_rate(rows, key):
+        rows = done(rows, key)
         if not rows:
             return 0
         return round2(len([x for x in rows if safe_float(x.get("result", {}).get(key, 0)) > 0]) / len(rows) * 100)
 
+    def block(title, rows):
+        return (
+            f"{title}\\n"
+            f"累積：{len(rows)} 筆\\n"
+            f"3日：{len(done(rows, 'return_3d_pct'))} 筆｜均報 {avg_return(rows, 'return_3d_pct')}%｜勝率 {win_rate(rows, 'return_3d_pct')}%\\n"
+            f"5日：{len(done(rows, 'return_5d_pct'))} 筆｜均報 {avg_return(rows, 'return_5d_pct')}%｜勝率 {win_rate(rows, 'return_5d_pct')}%\\n"
+            f"10日：{len(done(rows, 'return_10d_pct'))} 筆｜均報 {avg_return(rows, 'return_10d_pct')}%｜勝率 {win_rate(rows, 'return_10d_pct')}%\\n"
+        )
+
     return (
-        f"AI交易助理正式驗證版\\n"
+        f"AI交易助理訊號績效統計\\n"
         f"版本：{APP_VERSION_NAME}\\n"
         f"驗證模式：{'開啟' if VALIDATION_MODE else '關閉'}\\n"
         f"持股風控訊號：{len(holdings)} 筆\\n"
-        f"進場試單訊號：{len(entries)} 筆\\n"
         f"\\n"
-        f"3日結果：{len(done3)} 筆｜平均報酬 {avg_return(done3, 'return_3d_pct')}%｜勝率 {win_rate(done3, 'return_3d_pct')}%\\n"
-        f"5日結果：{len(done5)} 筆｜平均報酬 {avg_return(done5, 'return_5d_pct')}%｜勝率 {win_rate(done5, 'return_5d_pct')}%\\n"
-        f"10日結果：{len(done10)} 筆｜平均報酬 {avg_return(done10, 'return_10d_pct')}%｜勝率 {win_rate(done10, 'return_10d_pct')}%\\n"
+        f"{block('嚴格C級進場訊號 entry', strict_entries)}\\n"
+        f"{block('寬鬆觀察訊號 watch', loose_watch)}\\n"
+        f"說明：\\n"
+        f"嚴格C級：真正會在13:20通知你的可試單訊號。\\n"
+        f"寬鬆觀察：不通知、不進場，只用來加速累積資料，比較哪些D級觀察後來其實表現不錯。\\n"
         f"\\n"
-        f"自我優化狀態：{load_strategy_weights().get('mode', 'collecting')}｜可統計樣本 {load_strategy_weights().get('entry_count', 0)} 筆\\n"\
-        f"提醒：目前先跑100～200筆收集資料，不以此結果直接保證獲利。"
+        f"自我優化狀態：{load_strategy_weights().get('mode', 'collecting')}｜可統計樣本 {load_strategy_weights().get('entry_count', 0)} 筆\\n"
+        f"提醒：目前先跑100～300筆收集資料，不以此結果直接保證獲利。"
     )
-
 
 def default_strategy_weights():
     return {
@@ -1921,6 +2071,57 @@ def line_nextday():
 
 
 
+
+def load_schedule_health():
+    return read_json(SCHEDULE_HEALTH_FILE, {
+        "updated_at": "-",
+        "jobs": {}
+    })
+
+
+def save_schedule_health(data):
+    data["updated_at"] = taiwan_now()
+    write_json(SCHEDULE_HEALTH_FILE, data)
+
+
+def record_schedule_health(job_name, status="ok", message=""):
+    data = load_schedule_health()
+    jobs = data.get("jobs", {})
+    jobs[job_name] = {
+        "status": status,
+        "message": message,
+        "last_run": taiwan_now()
+    }
+    data["jobs"] = jobs
+    save_schedule_health(data)
+
+
+def schedule_health_text():
+    data = load_schedule_health()
+    rows = ["排程健康檢查", f"更新時間：{data.get('updated_at','-')}"]
+    jobs = data.get("jobs", {})
+    for key in ["daily_market_scan_1605", "line_open_watch_0910", "line_preclose_1320"]:
+        j = jobs.get(key, {})
+        rows.append(f"{key}｜{j.get('status','尚未執行')}｜{j.get('last_run','-')}｜{j.get('message','')}")
+    return "\n".join(rows)
+
+
+def run_line_open_watch_job():
+    try:
+        ok, info = send_line_notification("open")
+        record_schedule_health("line_open_watch_0910", "ok" if ok else "error", str(info)[:200])
+    except Exception as e:
+        record_schedule_health("line_open_watch_0910", "error", str(e))
+
+
+def run_line_preclose_job():
+    try:
+        ok, info = send_line_notification("preclose")
+        record_schedule_health("line_preclose_1320", "ok" if ok else "error", str(info)[:200])
+    except Exception as e:
+        record_schedule_health("line_preclose_1320", "error", str(e))
+
+
 def load_ai_strategy_report():
     return read_json(AI_STRATEGY_REPORT_FILE, {
         "updated_at": "-",
@@ -2175,6 +2376,12 @@ def version():
 @app.route("/signal-database")
 def signal_database():
     return load_signal_database()
+
+
+
+@app.route("/loose-signal-summary")
+def loose_signal_summary():
+    return Response(signal_summary_text(), mimetype="text/plain; charset=utf-8")
 
 
 @app.route("/signal-summary")
@@ -2548,9 +2755,13 @@ def scan_market():
     cand_list = list(cand.get("candidates", {}).values())[:MAX_CANDIDATE_DISPLAY]
     alerts = cand.get("entry_alerts", [])
 
+    loose_watch_count = record_loose_observation_signals(cand_list)
+
     data = {
         "updated_at": taiwan_now(),
         **market,
+        "loose_watch_count": loose_watch_count,
+        "loose_observation_enabled": LOOSE_OBSERVATION_ENABLED,
         "resource_saving_scan": ENABLE_RESOURCE_SAVING_SCAN,
         "rough_scan_total": len(rough_rows) if ENABLE_RESOURCE_SAVING_SCAN else total,
         "detailed_scan_total": detail_total,
@@ -2569,8 +2780,26 @@ def scan_market():
     save_scan_status(
         "done",
         f"掃描完成：全市場 {total} 檔，粗篩 {data['rough_scan_total']} 檔，細算 {detail_total} 檔，"
-        f"S級 {data['s_count']} 檔，A級候選 {data['a_count']} 檔，進場提醒 {len(alerts)} 檔。"
+        f"S級 {data['s_count']} 檔，A級候選 {data['a_count']} 檔，進場提醒 {len(alerts)} 檔，寬鬆觀察 {loose_watch_count} 檔。"
     )
+
+
+@app.route("/reset-scan-status")
+def reset_scan_status_route():
+    reset_scan_status("已手動重置掃描狀態，可以重新掃描。")
+    record_schedule_health("manual_reset", "ok", "使用者手動重置掃描狀態")
+    return redirect(url_for("index"))
+
+
+@app.route("/schedule-health")
+def schedule_health():
+    return Response(schedule_health_text(), mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/scan-status")
+def scan_status_route():
+    return load_scan_status()
+
 
 @app.route("/")
 def index():
@@ -2578,22 +2807,43 @@ def index():
     for t in tracks:
         updated.append(manage_holding(t, download_stock(t["symbol"],"1y")))
     save_track(updated); dash=strategy_dashboard(logs); feedback=scan.get("strategy_feedback") or strategy_feedback(logs)
-    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id(), openai_ready=bool(OPENAI_API_KEY), ai_report=load_ai_strategy_report())
+    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), loose_watch_count=scan.get("loose_watch_count",0), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id(), openai_ready=bool(OPENAI_API_KEY), ai_report=load_ai_strategy_report(), schedule_health=load_schedule_health())
 
 
 @app.route("/scan-now")
+@app.route("/scan-now")
 def scan_now():
     global is_scanning
-    if is_scanning: return redirect(url_for("index"))
+
+    status = load_scan_status()
+
+    # 如果狀態是逾時或錯誤，允許重新送出掃描。
+    if is_scanning and status.get("status") == "running":
+        save_scan_status("running", "掃描已在背景執行中，請稍候，不要重複按。")
+        return redirect(url_for("index"))
+
     def run():
         global is_scanning
         try:
-            is_scanning=True; scan_market()
+            is_scanning = True
+            save_scan_status("running", "已送出手動掃描任務，正在建立全市場股票池。")
+            record_schedule_health("manual_scan", "running", "手動掃描開始")
+            scan_market()
+            evaluate_signal_database()
+            optimize_strategy_weights()
+            if OPENAI_ANALYSIS_ENABLED:
+                generate_openai_strategy_report()
+            record_schedule_health("manual_scan", "ok", "手動掃描完成")
         except Exception as e:
-            save_scan_status("error", f"掃描失敗：{e}"); print("掃描失敗",e)
-        finally: is_scanning=False
-    threading.Thread(target=run,daemon=True).start(); return redirect(url_for("index"))
+            save_scan_status("error", f"手動掃描失敗：{e}")
+            record_schedule_health("manual_scan", "error", str(e))
+            print("手動掃描失敗", e)
+        finally:
+            is_scanning = False
 
+    threading.Thread(target=run, daemon=True).start()
+    save_scan_status("running", "手動掃描任務已送出，背景正在執行。")
+    return redirect(url_for("index"))
 
 def find_candidate(symbol): return read_json(CANDIDATE_FILE,{"candidates":{}}).get("candidates",{}).get(symbol)
 
@@ -2657,44 +2907,48 @@ def close_trade(symbol):
     save_trade_log(logs); save_track([x for x in tracks if x["symbol"] != symbol]); return redirect(url_for("index"))
 
 
+
 def scheduled_scan():
     global is_scanning
 
     now = datetime.now(TZ)
 
     # 省資源排程版：只在週一～週五執行全市場掃描
-    # weekday(): 0=星期一, 6=星期日
     if now.weekday() >= 5:
         save_scan_status("skip", "今天是假日，省資源模式略過全市場掃描。")
+        record_schedule_health("daily_market_scan_1605", "skip", "假日略過掃描")
         return
 
-    if is_scanning:
+    status = load_scan_status()
+
+    if is_scanning and status.get("status") == "running":
+        record_schedule_health("daily_market_scan_1605", "skip", "已有掃描執行中，略過本次")
         return
 
     is_scanning = True
 
     try:
+        save_scan_status("running", "16:05排程掃描開始，正在建立全市場股票池。")
+        record_schedule_health("daily_market_scan_1605", "running", "排程掃描開始")
         scan_market()
         evaluate_signal_database()
         optimize_strategy_weights()
-        generate_openai_strategy_report()
+        if OPENAI_ANALYSIS_ENABLED:
+            generate_openai_strategy_report()
+        record_schedule_health("daily_market_scan_1605", "ok", "排程掃描完成")
     except Exception as e:
         save_scan_status("error", f"排程掃描失敗：{e}")
+        record_schedule_health("daily_market_scan_1605", "error", str(e))
         print("排程掃描失敗", e)
     finally:
-        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-OPENAI_ANALYSIS_ENABLED = os.getenv("OPENAI_ANALYSIS_ENABLED", "1") == "1"
+        is_scanning = False
 
-is_scanning = False
 
 scheduler = BackgroundScheduler(timezone=TZ)
 
 # =====================================================
-# 省資源排程版
+# 穩定監控排程版
 # =====================================================
-# 週一～週五 16:05：只做一次全市場掃描
-# 週六、週日不掃描，避免 Railway 額度浪費。
 scheduler.add_job(
     scheduled_scan,
     trigger="cron",
@@ -2702,31 +2956,36 @@ scheduler.add_job(
     hour=16,
     minute=5,
     id="daily_market_scan",
-    replace_existing=True
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=1800
 )
 
-# 週一～週五 09:10：LINE 持股風控提醒
-# 不掃全市場，只檢查已追蹤持股。
 scheduler.add_job(
-    lambda: send_line_notification("open"),
+    run_line_open_watch_job,
     trigger="cron",
     day_of_week="mon-fri",
     hour=9,
     minute=10,
     id="line_open_watch_0910",
-    replace_existing=True
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=1800
 )
 
-# 週一～週五 13:20：LINE 可進場試單提醒
-# 不掃全市場，只讀取候選池 / 進場提醒。
 scheduler.add_job(
-    lambda: send_line_notification("preclose"),
+    run_line_preclose_job,
     trigger="cron",
     day_of_week="mon-fri",
     hour=13,
     minute=20,
     id="line_preclose_1320",
-    replace_existing=True
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=1800
 )
 
 scheduler.start()
