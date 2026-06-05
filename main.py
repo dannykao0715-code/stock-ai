@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理輕量穩定監控版_2026-06-05"
+APP_VERSION_NAME = "AI交易助理輕量穩定監控_LINE心跳回報版_2026-06-05"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -87,6 +87,9 @@ LOOSE_OBSERVATION_ENABLED = os.getenv("LOOSE_OBSERVATION_ENABLED", "1") == "1"
 LOOSE_OBSERVATION_LIMIT = int(os.getenv("LOOSE_OBSERVATION_LIMIT", "40"))
 HEARTBEAT_STALE_MINUTES = int(os.getenv("HEARTBEAT_STALE_MINUTES", "60"))
 SCAN_DATA_STALE_HOURS = int(os.getenv("SCAN_DATA_STALE_HOURS", "36"))
+HEARTBEAT_LINE_REPORT_ENABLED = os.getenv("HEARTBEAT_LINE_REPORT_ENABLED", "1") == "1"
+HEARTBEAT_HOLDING_CHECK_ENABLED = os.getenv("HEARTBEAT_HOLDING_CHECK_ENABLED", "1") == "1"
+HEARTBEAT_HOLDING_PERIOD = os.getenv("HEARTBEAT_HOLDING_PERIOD", "6mo")
 
 is_scanning = False
 
@@ -2155,11 +2158,135 @@ def heartbeat_status_label(status):
     return "未知"
 
 
+
+def heartbeat_holding_check():
+    """
+    開盤期間持股輕量監控：
+    只檢查「已加入追蹤」的股票，不掃全市場。
+    若沒有持股，完全不抓個股資料。
+    """
+    tracks = load_track()
+    if not tracks:
+        return {
+            "count": 0,
+            "summary": "目前沒有追蹤持股。",
+            "rows": [],
+            "warning_count": 0,
+        }
+
+    updated = []
+    rows = []
+    warning_count = 0
+
+    for t in tracks:
+        try:
+            df = download_stock(t.get("symbol"), HEARTBEAT_HOLDING_PERIOD)
+            t = manage_holding(t, df)
+        except Exception as e:
+            t["heartbeat_error"] = str(e)
+
+        level, action, icon, note = classify_holding_line_action(t)
+
+        if level in ["A", "B"]:
+            warning_count += 1
+
+        updated.append(t)
+        rows.append({
+            "symbol": t.get("symbol"),
+            "short_symbol": short_symbol(t.get("symbol", "")),
+            "name": t.get("name", "-"),
+            "level": level,
+            "action": action,
+            "icon": icon,
+            "note": note,
+            "curr": t.get("curr", "-"),
+            "cost": t.get("price", "-"),
+            "pnl": t.get("pnl", "-"),
+            "stop": t.get("practical_stop", "-"),
+            "support": t.get("support_price", "-"),
+            "trail_range": t.get("trail_range", "-"),
+        })
+
+    save_track(updated)
+
+    summary = f"已檢查 {len(rows)} 檔持股，其中 {warning_count} 檔需注意。"
+    return {
+        "count": len(rows),
+        "summary": summary,
+        "rows": rows,
+        "warning_count": warning_count,
+    }
+
+
+def format_heartbeat_line_report(h, holding_check):
+    status = h.get("status", "-")
+    status_label = h.get("status_label", status)
+
+    icon = "✅"
+    if status == "warning":
+        icon = "⚠️"
+    elif status == "danger":
+        icon = "🚨"
+
+    rows = [
+        f"{icon} 系統心跳回報｜{status_label}",
+        f"時間：{h.get('updated_at', taiwan_now())}",
+        f"加權：{h.get('twii','-')}｜櫃買：{h.get('otc','-')}",
+        f"掃描：{h.get('scan_status','-')}｜上次：{h.get('last_scan_time','-')}",
+        f"LINE：{'正常' if h.get('line_ready') else '未綁定'}",
+    ]
+
+    if h.get("warnings"):
+        rows.append("異常：" + "；".join(h.get("warnings", []))[:300])
+    else:
+        rows.append("狀態：目前未偵測到系統卡住或資料異常。")
+
+    rows.append("")
+    rows.append("📌 持股監控")
+    rows.append(holding_check.get("summary", "目前沒有持股資料。"))
+
+    for r in holding_check.get("rows", [])[:8]:
+        rows.append(
+            f"\n{r.get('icon','')} {r.get('name','-')} {r.get('short_symbol','')}"
+            f"\n建議：{r.get('action','-')}｜級別：{r.get('level','-')}"
+            f"\n現價：{r.get('curr','-')}｜成本：{r.get('cost','-')}｜損益：{r.get('pnl','-')}%"
+            f"\n停損：{r.get('stop','-')}｜支撐：{r.get('support','-')}"
+            f"\n說明：{r.get('note','-')}"
+        )
+
+    rows.append("")
+    rows.append("註：心跳只檢查大盤與已追蹤持股，不掃全市場。")
+    return "\n".join(rows)
+
+
+def maybe_push_heartbeat_line(h, holding_check, manual=False):
+    if not HEARTBEAT_LINE_REPORT_ENABLED:
+        return False, "HEARTBEAT_LINE_REPORT_ENABLED=0"
+
+    if not get_line_token() or not get_line_user_id():
+        return False, "LINE token 或 user id 未設定"
+
+    text = format_heartbeat_line_report(h, holding_check)
+    ok, info = push_line_message(text)
+
+    logs = read_json(LINE_NOTIFY_LOG_FILE, [])
+    logs.append({
+        "mode": "heartbeat",
+        "ok": ok,
+        "info": info,
+        "time": taiwan_now(),
+        "manual": manual,
+    })
+    write_json(LINE_NOTIFY_LOG_FILE, logs[-100:])
+
+    return ok, info
+
+
 def market_heartbeat_check(manual=False):
     """
     輕量心跳檢查：
     不掃全市場，只抓大盤/櫃買、檢查掃描狀態、LINE綁定與資料新鮮度。
-    用來判斷系統是不是還活著，避免你看到舊資料卻以為系統正在監控。
+    若有已加入追蹤的持股，會同步做持股輕量檢查並用LINE回報。
     """
     warnings = []
     status_level = "ok"
@@ -2200,6 +2327,18 @@ def market_heartbeat_check(manual=False):
         warnings.append("LINE User ID 尚未綁定，推播會失效。")
         status_level = "warning" if status_level != "danger" else status_level
 
+    holding_check = {
+        "count": 0,
+        "summary": "持股心跳檢查未啟用。",
+        "rows": [],
+        "warning_count": 0,
+    }
+
+    if HEARTBEAT_HOLDING_CHECK_ENABLED:
+        holding_check = heartbeat_holding_check()
+        if holding_check.get("warning_count", 0) > 0 and status_level == "ok":
+            status_level = "warning"
+
     if not warnings:
         message = "系統心跳正常：網站可執行、大盤資料可抓取、掃描狀態無卡住。"
     else:
@@ -2219,15 +2358,24 @@ def market_heartbeat_check(manual=False):
         "manual": manual,
         "rough_scan_top_n": ROUGH_SCAN_TOP_N,
         "loose_observation_limit": LOOSE_OBSERVATION_LIMIT,
+        "holding_check": holding_check,
+        "heartbeat_line_enabled": HEARTBEAT_LINE_REPORT_ENABLED,
+        "heartbeat_holding_enabled": HEARTBEAT_HOLDING_CHECK_ENABLED,
     }
 
     save_heartbeat_status(data)
     record_schedule_health("market_heartbeat", status_level, message[:200])
-    return data
 
+    ok, info = maybe_push_heartbeat_line(data, holding_check, manual=manual)
+    data["line_push_ok"] = ok
+    data["line_push_info"] = str(info)[:300]
+    save_heartbeat_status(data)
+
+    return data
 
 def heartbeat_summary_text():
     h = load_heartbeat_status()
+    hc = h.get("holding_check", {})
     rows = [
         "系統心跳監控",
         f"狀態：{h.get('status_label', h.get('status','-'))}",
@@ -2237,13 +2385,25 @@ def heartbeat_summary_text():
         f"上次全市場掃描：{h.get('last_scan_time','-')}",
         f"掃描狀態：{h.get('scan_status','-')}｜{h.get('scan_message','-')}",
         f"LINE綁定：{'正常' if h.get('line_ready') else '未綁定'}",
+        f"LINE心跳回報：{'開啟' if h.get('heartbeat_line_enabled') else '關閉'}",
+        f"持股心跳檢查：{'開啟' if h.get('heartbeat_holding_enabled') else '關閉'}",
         f"輕量設定：細算 {h.get('rough_scan_top_n','-')} 檔｜寬鬆觀察 {h.get('loose_observation_limit','-')} 檔",
         "",
         f"說明：{h.get('message','-')}",
+        "",
+        "持股檢查：",
+        f"{hc.get('summary','尚未檢查')}",
     ]
+
+    for r in hc.get("rows", [])[:20]:
+        rows.append(
+            f"{r.get('name','-')} {r.get('short_symbol','')}｜"
+            f"{r.get('action','-')}｜現價 {r.get('curr','-')}｜損益 {r.get('pnl','-')}%"
+        )
+
+    rows.append("")
+    rows.append(f"最後LINE推播：{'成功' if h.get('line_push_ok') else '未成功/未推播'}｜{h.get('line_push_info','')}")
     return "\n".join(rows)
-
-
 
 def load_ai_strategy_report():
     return read_json(AI_STRATEGY_REPORT_FILE, {
