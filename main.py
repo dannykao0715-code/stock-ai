@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理穩定監控_嚴格C級加寬鬆觀察版_2026-06-04"
+APP_VERSION_NAME = "AI交易助理輕量穩定監控版_2026-06-05"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -27,6 +27,7 @@ TRADE_LOG_FILE = "trade_log.json"
 STOCK_POOL_FILE = "stock_pool.json"
 SCAN_STATUS_FILE = "scan_status.json"
 SCHEDULE_HEALTH_FILE = "schedule_health.json"
+HEARTBEAT_FILE = "heartbeat.json"
 CANDIDATE_FILE = "candidate_pool.json"
 LINE_USER_FILE = "line_user.json"
 LINE_NOTIFY_LOG_FILE = "line_notify_log.json"
@@ -72,7 +73,7 @@ OPTIMIZE_MIN_WEIGHT = float(os.getenv("OPTIMIZE_MIN_WEIGHT", "-20"))
 # 全市場約 1800 檔會先做「粗篩」，只留下分數較高的股票再做完整細算。
 # 這樣可以保留全市場掃描概念，但大幅降低 CPU 與記憶體消耗。
 ENABLE_RESOURCE_SAVING_SCAN = os.getenv("ENABLE_RESOURCE_SAVING_SCAN", "1") == "1"
-ROUGH_SCAN_TOP_N = int(os.getenv("ROUGH_SCAN_TOP_N", "320"))
+ROUGH_SCAN_TOP_N = int(os.getenv("ROUGH_SCAN_TOP_N", "200"))
 ROUGH_SCAN_MIN_SCORE = float(os.getenv("ROUGH_SCAN_MIN_SCORE", "15"))
 DETAILED_ANALYSIS_SLEEP = float(os.getenv("DETAILED_ANALYSIS_SLEEP", "0.01"))
 ROUGH_ANALYSIS_SLEEP = float(os.getenv("ROUGH_ANALYSIS_SLEEP", "0.005"))
@@ -83,7 +84,9 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_ANALYSIS_ENABLED = os.getenv("OPENAI_ANALYSIS_ENABLED", "1") == "1"
 SCAN_TIMEOUT_MINUTES = int(os.getenv("SCAN_TIMEOUT_MINUTES", "90"))
 LOOSE_OBSERVATION_ENABLED = os.getenv("LOOSE_OBSERVATION_ENABLED", "1") == "1"
-LOOSE_OBSERVATION_LIMIT = int(os.getenv("LOOSE_OBSERVATION_LIMIT", "80"))
+LOOSE_OBSERVATION_LIMIT = int(os.getenv("LOOSE_OBSERVATION_LIMIT", "40"))
+HEARTBEAT_STALE_MINUTES = int(os.getenv("HEARTBEAT_STALE_MINUTES", "60"))
+SCAN_DATA_STALE_HOURS = int(os.getenv("SCAN_DATA_STALE_HOURS", "36"))
 
 is_scanning = False
 
@@ -2100,7 +2103,7 @@ def schedule_health_text():
     data = load_schedule_health()
     rows = ["排程健康檢查", f"更新時間：{data.get('updated_at','-')}"]
     jobs = data.get("jobs", {})
-    for key in ["daily_market_scan_1605", "line_open_watch_0910", "line_preclose_1320"]:
+    for key in ["market_heartbeat", "daily_market_scan_1605", "line_open_watch_0910", "line_preclose_1320"]:
         j = jobs.get(key, {})
         rows.append(f"{key}｜{j.get('status','尚未執行')}｜{j.get('last_run','-')}｜{j.get('message','')}")
     return "\n".join(rows)
@@ -2120,6 +2123,126 @@ def run_line_preclose_job():
         record_schedule_health("line_preclose_1320", "ok" if ok else "error", str(info)[:200])
     except Exception as e:
         record_schedule_health("line_preclose_1320", "error", str(e))
+
+
+
+def load_heartbeat_status():
+    return read_json(HEARTBEAT_FILE, {
+        "status": "unknown",
+        "updated_at": "-",
+        "message": "尚未執行心跳檢查",
+        "warnings": [],
+        "twii": "-",
+        "otc": "-",
+        "last_scan_time": "-",
+        "scan_status": "-",
+        "line_ready": False,
+    })
+
+
+def save_heartbeat_status(data):
+    data["updated_at"] = taiwan_now()
+    write_json(HEARTBEAT_FILE, data)
+
+
+def heartbeat_status_label(status):
+    if status == "ok":
+        return "正常"
+    if status == "warning":
+        return "警告"
+    if status == "danger":
+        return "失效"
+    return "未知"
+
+
+def market_heartbeat_check(manual=False):
+    """
+    輕量心跳檢查：
+    不掃全市場，只抓大盤/櫃買、檢查掃描狀態、LINE綁定與資料新鮮度。
+    用來判斷系統是不是還活著，避免你看到舊資料卻以為系統正在監控。
+    """
+    warnings = []
+    status_level = "ok"
+
+    twii = get_index_price("^TWII")
+    otc = get_index_price("^TWOII")
+
+    if twii == "-" or otc == "-":
+        warnings.append("大盤或櫃買指數抓取失敗，資料源可能異常。")
+        status_level = "warning"
+
+    scan_status = load_scan_status()
+    scan = load_scan_results()
+    scan_time = scan.get("updated_at", "-")
+    scan_ts = parse_taiwan_time(scan_time)
+
+    if scan_status.get("status") == "running":
+        ts = parse_taiwan_time(scan_status.get("updated_at"))
+        if ts:
+            minutes = (datetime.now(TZ) - ts).total_seconds() / 60
+            if minutes > SCAN_TIMEOUT_MINUTES:
+                warnings.append(f"掃描狀態卡在 running 超過 {SCAN_TIMEOUT_MINUTES} 分鐘。")
+                status_level = "danger"
+        else:
+            warnings.append("掃描狀態為 running，但時間格式異常。")
+            status_level = "warning"
+
+    if not scan_ts:
+        warnings.append("尚未有有效的全市場掃描時間。")
+        status_level = "warning"
+    else:
+        hours = (datetime.now(TZ) - scan_ts).total_seconds() / 3600
+        if hours > SCAN_DATA_STALE_HOURS:
+            warnings.append(f"全市場掃描資料已超過 {SCAN_DATA_STALE_HOURS} 小時未更新。")
+            status_level = "warning" if status_level != "danger" else status_level
+
+    if not get_line_user_id():
+        warnings.append("LINE User ID 尚未綁定，推播會失效。")
+        status_level = "warning" if status_level != "danger" else status_level
+
+    if not warnings:
+        message = "系統心跳正常：網站可執行、大盤資料可抓取、掃描狀態無卡住。"
+    else:
+        message = "；".join(warnings)
+
+    data = {
+        "status": status_level,
+        "status_label": heartbeat_status_label(status_level),
+        "message": message,
+        "warnings": warnings,
+        "twii": twii,
+        "otc": otc,
+        "last_scan_time": scan_time,
+        "scan_status": scan_status.get("status", "-"),
+        "scan_message": scan_status.get("message", "-"),
+        "line_ready": bool(get_line_user_id()),
+        "manual": manual,
+        "rough_scan_top_n": ROUGH_SCAN_TOP_N,
+        "loose_observation_limit": LOOSE_OBSERVATION_LIMIT,
+    }
+
+    save_heartbeat_status(data)
+    record_schedule_health("market_heartbeat", status_level, message[:200])
+    return data
+
+
+def heartbeat_summary_text():
+    h = load_heartbeat_status()
+    rows = [
+        "系統心跳監控",
+        f"狀態：{h.get('status_label', h.get('status','-'))}",
+        f"更新時間：{h.get('updated_at','-')}",
+        f"加權指數：{h.get('twii','-')}",
+        f"櫃買指數：{h.get('otc','-')}",
+        f"上次全市場掃描：{h.get('last_scan_time','-')}",
+        f"掃描狀態：{h.get('scan_status','-')}｜{h.get('scan_message','-')}",
+        f"LINE綁定：{'正常' if h.get('line_ready') else '未綁定'}",
+        f"輕量設定：細算 {h.get('rough_scan_top_n','-')} 檔｜寬鬆觀察 {h.get('loose_observation_limit','-')} 檔",
+        "",
+        f"說明：{h.get('message','-')}",
+    ]
+    return "\n".join(rows)
+
 
 
 def load_ai_strategy_report():
@@ -2762,6 +2885,8 @@ def scan_market():
         **market,
         "loose_watch_count": loose_watch_count,
         "loose_observation_enabled": LOOSE_OBSERVATION_ENABLED,
+        "rough_scan_top_n": ROUGH_SCAN_TOP_N,
+        "lightweight_mode": True,
         "resource_saving_scan": ENABLE_RESOURCE_SAVING_SCAN,
         "rough_scan_total": len(rough_rows) if ENABLE_RESOURCE_SAVING_SCAN else total,
         "detailed_scan_total": detail_total,
@@ -2801,13 +2926,24 @@ def scan_status_route():
     return load_scan_status()
 
 
+
+@app.route("/heartbeat")
+def heartbeat_route():
+    return market_heartbeat_check(manual=True)
+
+
+@app.route("/system-health")
+def system_health_route():
+    return Response(heartbeat_summary_text(), mimetype="text/plain; charset=utf-8")
+
+
 @app.route("/")
 def index():
     scan=load_scan_results(); status=load_scan_status(); tracks=load_track(); logs=load_trade_log(); updated=[]
     for t in tracks:
         updated.append(manage_holding(t, download_stock(t["symbol"],"1y")))
     save_track(updated); dash=strategy_dashboard(logs); feedback=scan.get("strategy_feedback") or strategy_feedback(logs)
-    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), loose_watch_count=scan.get("loose_watch_count",0), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id(), openai_ready=bool(OPENAI_API_KEY), ai_report=load_ai_strategy_report(), schedule_health=load_schedule_health())
+    return render_template("index.html", now=taiwan_now(), twii=get_index_price("^TWII"), otc=get_index_price("^TWOII"), market_status=scan.get("market_status","尚未掃描"), market_score=scan.get("market_score",0), risk_mode=scan.get("risk_mode","-"), risk_switch=scan.get("risk_switch","-"), allow_new_positions=scan.get("allow_new_positions",False), risk_note=scan.get("risk_note","-"), risk_multiplier=scan.get("risk_multiplier",0), market_egg_zone=scan.get("market_egg_zone","-"), market_pressure_note=scan.get("market_pressure_note","-"), scan_updated_at=scan.get("updated_at","尚未掃描"), stock_pool_count=scan.get("stock_pool_count",0), s_count=scan.get("s_count",0), a_count=scan.get("a_count",0), candidate_count=scan.get("candidate_count",0), sector_rankings=scan.get("sector_rankings",[]), candidate_pool=scan.get("candidate_pool",[]), entry_alerts=scan.get("entry_alerts",[]), loose_watch_count=scan.get("loose_watch_count",0), scan_status=status.get("status","idle"), scan_message=status.get("message","尚未掃描"), scan_status_time=status.get("updated_at","-"), tracks=updated, trade_logs=logs[-15:], strategy_dashboard=dash, strategy_feedback=feedback, account_size=ACCOUNT_SIZE, risk_per_trade=round2(RISK_PER_TRADE*100), line_token_ready=bool(get_line_token()), line_user_ready=bool(get_line_user_id()), line_enabled=line_enabled(), line_user_id=get_line_user_id(), openai_ready=bool(OPENAI_API_KEY), ai_report=load_ai_strategy_report(), schedule_health=load_schedule_health(), heartbeat=load_heartbeat_status())
 
 
 @app.route("/scan-now")
@@ -2944,11 +3080,40 @@ def scheduled_scan():
         is_scanning = False
 
 
+
 scheduler = BackgroundScheduler(timezone=TZ)
 
 # =====================================================
-# 穩定監控排程版
+# 輕量穩定監控排程版
 # =====================================================
+# 開盤期間心跳檢查：只抓大盤/櫃買與系統狀態，不掃全市場
+scheduler.add_job(
+    market_heartbeat_check,
+    trigger="cron",
+    day_of_week="mon-fri",
+    hour="9-12",
+    minute="5,35",
+    id="market_heartbeat_morning",
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=900
+)
+
+scheduler.add_job(
+    market_heartbeat_check,
+    trigger="cron",
+    day_of_week="mon-fri",
+    hour=13,
+    minute="5,25",
+    id="market_heartbeat_afternoon",
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=900
+)
+
+# 全市場掃描仍然一天一次，避免吃掉Railway資源
 scheduler.add_job(
     scheduled_scan,
     trigger="cron",
