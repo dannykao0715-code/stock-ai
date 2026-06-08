@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理輕量穩定監控_LINE心跳回報版_2026-06-05"
+APP_VERSION_NAME = "AI交易助理_TWSE_TPEX即時資料源版_2026-06-08"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -90,6 +90,8 @@ SCAN_DATA_STALE_HOURS = int(os.getenv("SCAN_DATA_STALE_HOURS", "36"))
 HEARTBEAT_LINE_REPORT_ENABLED = os.getenv("HEARTBEAT_LINE_REPORT_ENABLED", "1") == "1"
 HEARTBEAT_HOLDING_CHECK_ENABLED = os.getenv("HEARTBEAT_HOLDING_CHECK_ENABLED", "1") == "1"
 HEARTBEAT_HOLDING_PERIOD = os.getenv("HEARTBEAT_HOLDING_PERIOD", "6mo")
+REALTIME_QUOTE_ENABLED = os.getenv("REALTIME_QUOTE_ENABLED", "1") == "1"
+REALTIME_QUOTE_TIMEOUT = float(os.getenv("REALTIME_QUOTE_TIMEOUT", "6"))
 
 is_scanning = False
 
@@ -369,6 +371,150 @@ def get_stock_pool():
         return market
     save_scan_status("running", "股票池來源失敗，使用備援龍頭池。")
     return fallback_stock_pool()
+
+
+
+def twse_exch_symbol(symbol):
+    """
+    轉成 TWSE MIS 即時報價用的 ex_ch 格式。
+    - 2330.TW  -> tse_2330.tw
+    - 8299.TWO -> otc_8299.tw
+    - ^TWII    -> tse_t00.tw
+    - ^TWOII   -> otc_o00.tw
+    """
+    if not symbol:
+        return None
+
+    s = str(symbol).strip()
+
+    if s in ["^TWII", "TWII", "TAIEX", "tse_t00.tw"]:
+        return "tse_t00.tw"
+
+    if s in ["^TWOII", "TWOII", "OTC", "otc_o00.tw"]:
+        return "otc_o00.tw"
+
+    if s.endswith(".TW"):
+        return f"tse_{s.replace('.TW','')}.tw"
+
+    if s.endswith(".TWO"):
+        return f"otc_{s.replace('.TWO','')}.tw"
+
+    # 預設把純數字代號先當上市；如果抓不到再由 fallback 處理。
+    if s.isdigit():
+        return f"tse_{s}.tw"
+
+    return None
+
+
+def parse_twse_price(value):
+    try:
+        if value is None:
+            return 0
+        s = str(value).replace(",", "").strip()
+        if s in ["", "-", "--", "NaN", "nan"]:
+            return 0
+        return float(s)
+    except Exception:
+        return 0
+
+
+def fetch_twse_realtime_quote(symbol):
+    """
+    輕量即時報價：
+    優先給心跳與持股監控使用，不拿來做全市場掃描。
+    資料源：TWSE MIS / TPEX 即時報價格式。
+    抓不到就回傳 None，後面會 fallback 到 yfinance。
+    """
+    if not REALTIME_QUOTE_ENABLED:
+        return None
+
+    ex_ch = twse_exch_symbol(symbol)
+    if not ex_ch:
+        return None
+
+    try:
+        url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+        params = {
+            "ex_ch": ex_ch,
+            "json": "1",
+            "delay": "0",
+            "_": int(time.time() * 1000),
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://mis.twse.com.tw/stock/index.jsp",
+            "Accept": "application/json,text/plain,*/*",
+        }
+
+        r = requests.get(url, params=params, headers=headers, timeout=REALTIME_QUOTE_TIMEOUT)
+        if r.status_code != 200:
+            return None
+
+        data = r.json()
+        arr = data.get("msgArray", [])
+        if not arr:
+            return None
+
+        q = arr[0]
+        price = parse_twse_price(q.get("z"))
+
+        # 有時候 z 會是 "-"，用最佳買賣或昨收做備援，但要標記不是完整成交價。
+        source_note = "TWSE/TPEX即時成交"
+        if not price:
+            price = parse_twse_price(q.get("a", "").split("_")[0] if q.get("a") else 0)
+            source_note = "TWSE/TPEX最佳賣價備援"
+
+        if not price:
+            price = parse_twse_price(q.get("b", "").split("_")[0] if q.get("b") else 0)
+            source_note = "TWSE/TPEX最佳買價備援"
+
+        if not price:
+            price = parse_twse_price(q.get("y"))
+            source_note = "TWSE/TPEX昨收備援"
+
+        if not price:
+            return None
+
+        return {
+            "symbol": symbol,
+            "ex_ch": ex_ch,
+            "name": q.get("n", ""),
+            "price": round2(price),
+            "open": round2(parse_twse_price(q.get("o"))),
+            "high": round2(parse_twse_price(q.get("h"))),
+            "low": round2(parse_twse_price(q.get("l"))),
+            "yesterday": round2(parse_twse_price(q.get("y"))),
+            "volume": q.get("v", "-"),
+            "date": q.get("d", "-"),
+            "time": q.get("t", "-"),
+            "source": source_note,
+            "raw_time": f"{q.get('d','-')} {q.get('t','-')}",
+        }
+
+    except Exception as e:
+        print("fetch_twse_realtime_quote failed", symbol, e)
+        return None
+
+
+def get_realtime_price(symbol):
+    q = fetch_twse_realtime_quote(symbol)
+    if q and q.get("price"):
+        return q
+
+    # fallback：避免TWSE/TPEX暫時抓不到時整個心跳失效
+    df = download_stock(symbol, "5d")
+    if df is None or df.empty:
+        return None
+
+    return {
+        "symbol": symbol,
+        "price": round2(df["Close"].iloc[-1]),
+        "date": "-",
+        "time": "-",
+        "source": "yfinance備援",
+        "raw_time": "-",
+    }
+
 
 
 def download_stock(symbol, period="1y"):
@@ -651,11 +797,10 @@ def market_status():
 
 
 def get_index_price(symbol):
-    df = download_stock(symbol, "5d")
-    if df is None or df.empty:
-        return "-"
-    return round2(df["Close"].iloc[-1])
-
+    q = get_realtime_price(symbol)
+    if q and q.get("price"):
+        return q.get("price")
+    return "-"
 
 def analyze_stock(df):
     if df is None or len(df) < 120:
@@ -2163,7 +2308,7 @@ def heartbeat_holding_check():
     """
     開盤期間持股輕量監控：
     只檢查「已加入追蹤」的股票，不掃全市場。
-    若沒有持股，完全不抓個股資料。
+    持股現價優先使用 TWSE/TPEX 即時報價；抓不到才退回 yfinance。
     """
     tracks = load_track()
     if not tracks:
@@ -2172,16 +2317,33 @@ def heartbeat_holding_check():
             "summary": "目前沒有追蹤持股。",
             "rows": [],
             "warning_count": 0,
+            "data_source": "無持股",
         }
 
     updated = []
     rows = []
     warning_count = 0
+    source_counter = {}
 
     for t in tracks:
+        quote = None
+
         try:
+            # 先用日K管理持股區間、移動停利與支撐
             df = download_stock(t.get("symbol"), HEARTBEAT_HOLDING_PERIOD)
             t = manage_holding(t, df)
+
+            # 再用即時報價覆蓋目前價與損益
+            quote = get_realtime_price(t.get("symbol"))
+            if quote and quote.get("price"):
+                curr = safe_float(quote.get("price"))
+                entry = safe_float(t.get("price"))
+                t["curr"] = curr
+                t["pnl"] = round2(pct(curr, entry)) if entry else t.get("pnl", 0)
+                t["realtime_source"] = quote.get("source", "-")
+                t["realtime_time"] = quote.get("raw_time", "-")
+                source_counter[t["realtime_source"]] = source_counter.get(t["realtime_source"], 0) + 1
+
         except Exception as e:
             t["heartbeat_error"] = str(e)
 
@@ -2205,18 +2367,21 @@ def heartbeat_holding_check():
             "stop": t.get("practical_stop", "-"),
             "support": t.get("support_price", "-"),
             "trail_range": t.get("trail_range", "-"),
+            "source": t.get("realtime_source", "-"),
+            "quote_time": t.get("realtime_time", "-"),
         })
 
     save_track(updated)
 
-    summary = f"已檢查 {len(rows)} 檔持股，其中 {warning_count} 檔需注意。"
+    src_text = "、".join([f"{k}:{v}" for k, v in source_counter.items()]) if source_counter else "無即時資料"
+    summary = f"已檢查 {len(rows)} 檔持股，其中 {warning_count} 檔需注意。資料源：{src_text}"
     return {
         "count": len(rows),
         "summary": summary,
         "rows": rows,
         "warning_count": warning_count,
+        "data_source": src_text,
     }
-
 
 def format_heartbeat_line_report(h, holding_check):
     status = h.get("status", "-")
@@ -2232,6 +2397,8 @@ def format_heartbeat_line_report(h, holding_check):
         f"{icon} 系統心跳回報｜{status_label}",
         f"時間：{h.get('updated_at', taiwan_now())}",
         f"加權：{h.get('twii','-')}｜櫃買：{h.get('otc','-')}",
+        f"資料源：{h.get('market_data_source','-')}",
+        f"報價時間：{h.get('market_quote_time','-')}",
         f"掃描：{h.get('scan_status','-')}｜上次：{h.get('last_scan_time','-')}",
         f"LINE：{'正常' if h.get('line_ready') else '未綁定'}",
     ]
@@ -2251,6 +2418,7 @@ def format_heartbeat_line_report(h, holding_check):
             f"\n建議：{r.get('action','-')}｜級別：{r.get('level','-')}"
             f"\n現價：{r.get('curr','-')}｜成本：{r.get('cost','-')}｜損益：{r.get('pnl','-')}%"
             f"\n停損：{r.get('stop','-')}｜支撐：{r.get('support','-')}"
+            f"\n資料源：{r.get('source','-')}｜時間：{r.get('quote_time','-')}"
             f"\n說明：{r.get('note','-')}"
         )
 
@@ -2291,8 +2459,12 @@ def market_heartbeat_check(manual=False):
     warnings = []
     status_level = "ok"
 
-    twii = get_index_price("^TWII")
-    otc = get_index_price("^TWOII")
+    twii_quote = get_realtime_price("^TWII")
+    otc_quote = get_realtime_price("^TWOII")
+    twii = twii_quote.get("price") if twii_quote else "-"
+    otc = otc_quote.get("price") if otc_quote else "-"
+    market_data_source = f"加權:{twii_quote.get('source','-') if twii_quote else '-'}｜櫃買:{otc_quote.get('source','-') if otc_quote else '-'}"
+    market_quote_time = f"加權:{twii_quote.get('raw_time','-') if twii_quote else '-'}｜櫃買:{otc_quote.get('raw_time','-') if otc_quote else '-'}"
 
     if twii == "-" or otc == "-":
         warnings.append("大盤或櫃買指數抓取失敗，資料源可能異常。")
@@ -2351,6 +2523,8 @@ def market_heartbeat_check(manual=False):
         "warnings": warnings,
         "twii": twii,
         "otc": otc,
+        "market_data_source": market_data_source,
+        "market_quote_time": market_quote_time,
         "last_scan_time": scan_time,
         "scan_status": scan_status.get("status", "-"),
         "scan_message": scan_status.get("message", "-"),
@@ -2382,6 +2556,8 @@ def heartbeat_summary_text():
         f"更新時間：{h.get('updated_at','-')}",
         f"加權指數：{h.get('twii','-')}",
         f"櫃買指數：{h.get('otc','-')}",
+        f"資料源：{h.get('market_data_source','-')}",
+        f"報價時間：{h.get('market_quote_time','-')}",
         f"上次全市場掃描：{h.get('last_scan_time','-')}",
         f"掃描狀態：{h.get('scan_status','-')}｜{h.get('scan_message','-')}",
         f"LINE綁定：{'正常' if h.get('line_ready') else '未綁定'}",
@@ -2398,7 +2574,7 @@ def heartbeat_summary_text():
     for r in hc.get("rows", [])[:20]:
         rows.append(
             f"{r.get('name','-')} {r.get('short_symbol','')}｜"
-            f"{r.get('action','-')}｜現價 {r.get('curr','-')}｜損益 {r.get('pnl','-')}%"
+            f"{r.get('action','-')}｜現價 {r.get('curr','-')}｜損益 {r.get('pnl','-')}%｜{r.get('source','-')}"
         )
 
     rows.append("")
@@ -3085,6 +3261,21 @@ def schedule_health():
 def scan_status_route():
     return load_scan_status()
 
+
+
+
+@app.route("/quote-test/<symbol>")
+def quote_test(symbol):
+    q = get_realtime_price(symbol)
+    return q or {"error": "no quote", "symbol": symbol}
+
+
+@app.route("/quote-index")
+def quote_index():
+    return {
+        "twii": get_realtime_price("^TWII"),
+        "otc": get_realtime_price("^TWOII"),
+    }
 
 
 @app.route("/heartbeat")
