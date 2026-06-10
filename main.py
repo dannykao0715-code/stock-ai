@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "AI交易助理_TWSE_TPEX即時資料源_首頁顯示版_2026-06-08"
+APP_VERSION_NAME = "AI交易助理_TWSE_TPEX即時資料源_首頁顯示_心跳每小時版_2026-06-08"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -3437,27 +3437,15 @@ scheduler = BackgroundScheduler(timezone=TZ)
 # =====================================================
 # 輕量穩定監控排程版
 # =====================================================
-# 開盤期間心跳檢查：只抓大盤/櫃買與系統狀態，不掃全市場
+# 開盤期間心跳檢查：每小時回報一次
+# 只抓大盤/櫃買與已追蹤持股，不掃全市場
 scheduler.add_job(
     market_heartbeat_check,
     trigger="cron",
     day_of_week="mon-fri",
-    hour="9-12",
-    minute="5,35",
-    id="market_heartbeat_morning",
-    replace_existing=True,
-    max_instances=1,
-    coalesce=True,
-    misfire_grace_time=900
-)
-
-scheduler.add_job(
-    market_heartbeat_check,
-    trigger="cron",
-    day_of_week="mon-fri",
-    hour=13,
-    minute="5,25",
-    id="market_heartbeat_afternoon",
+    hour="9-13",
+    minute=5,
+    id="market_heartbeat_hourly",
     replace_existing=True,
     max_instances=1,
     coalesce=True,
