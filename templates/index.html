@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>AI實戰交易管理 + Top-Down法人選股系統｜TWSE/TPEX即時資料源首頁顯示心跳每小時版</title>
+<title>突破前高策略驗證版｜TWSE/TPEX即時資料源</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <script>setInterval(function(){ location.reload(); }, 300000);</script>
@@ -11,8 +11,8 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 </style>
 </head>
 <body><div class="container py-4">
-<h2>💰 AI實戰交易管理 + Top-Down法人選股系統</h2>
-<div class="muted mb-2">輕量穩定監控版：首頁直接顯示版本、即時資料源與LINE心跳狀態。</div>
+<h2>🚀 突破前高策略驗證版</h2>
+<div class="muted mb-2">穩定版架構保留：TWSE/TPEX即時資料源、LINE心跳、09:10持股監控、13:20進場檢查、16:05盤後全市場突破掃描。</div>
 
 <div class="top-card">
   <div class="d-flex flex-wrap justify-content-between gap-2">
@@ -47,7 +47,7 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
   </div>
   <hr>
   <div class="muted">
-    輕量設定：全市場細算 {{ rough_scan_top_n }} 檔｜寬鬆觀察 {{ loose_observation_limit }} 檔｜
+    策略設定：盤後全市場突破掃描｜進場區突破價上下3%｜開高超過5%不追｜
     心跳資料源：{{ heartbeat.market_data_source|default("-") }}｜
     報價時間：{{ heartbeat.market_quote_time|default("-") }}
   </div>
@@ -55,10 +55,10 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <div class="top-card">
 <div>🕒 網站時間：{{ now }}</div><div>📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
 <div>🌍 大盤狀態：<span class="{% if allow_new_positions %}good{% else %}bad{% endif %}">{{ market_status }}</span> ｜ 大盤位階：{{ market_egg_zone }} ｜ 前方壓力：{{ market_pressure_note }} ｜ 操作模式：<span class="warning">{{ risk_mode }}</span> ｜ 風險開關：{% if allow_new_positions %}<span class="good">{{ risk_switch }}</span>{% else %}<span class="bad">{{ risk_switch }}</span>{% endif %} ｜ 部位倍率：{{ risk_multiplier }}</div>
-<div>📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 嚴格C級：<span class="warning">{{ entry_alerts|length }}</span> 檔 ｜ 寬鬆觀察：<span class="blue">{{ loose_watch_count|default(0) }}</span> 檔 ｜ 已追蹤：<span class="warning">{{ tracks|length }}</span> 檔 ｜ AI候選：{{ candidate_count }} 檔 ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}</div>
+<div>📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 可進場訊號：<span class="warning">{{ entry_alerts|length }}</span> 檔 ｜ 突破/觀察：<span class="blue">{{ loose_watch_count|default(0) }}</span> 檔 ｜ 已追蹤：<span class="warning">{{ tracks|length }}</span> 檔 ｜ 突破候選：{{ candidate_count }} 檔 ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}</div>
 </div>
-<div class="mb-3"><a href="/scan-now" class="btn btn-success me-2">送出背景掃描</a><a href="/reset-scan-status" class="btn btn-danger me-2" onclick="return confirm('確定要重置掃描狀態嗎？')">重置掃描狀態</a><button onclick="location.reload()" class="btn btn-main me-2">重新整理</button><a href="/heartbeat" class="btn btn-outline-primary me-2" target="_blank">手動心跳檢查</a><a href="/system-health" class="btn btn-outline-light me-2" target="_blank">系統健康狀態</a><a href="/schedule-health" class="btn btn-outline-light me-2" target="_blank">排程健康檢查</a><a href="/signal-summary" class="btn btn-outline-success me-2" target="_blank">嚴格/寬鬆統計</a><a href="/quote-index" class="btn btn-outline-info me-2" target="_blank">即時大盤資料源</a><a href="/line-test" class="btn btn-yellow me-2">測試LINE通知</a><a href="/line-open-watch" class="btn btn-outline-info me-2">09:10 AI持股監控</a><a href="/line-preclose" class="btn btn-outline-warning me-2">13:20 AI交易助理進場指令</a><a href="/generate-ai-report" class="btn btn-outline-light">產生OpenAI分析報告</a></div>
-<div class="panel"><h5>LINE通知狀態</h5><div>Token：{% if line_token_ready %}<span class="good">已設定</span>{% else %}<span class="bad">未設定</span>{% endif %} ｜ User ID：{% if line_user_ready %}<span class="good">已綁定</span>{% else %}<span class="warning">尚未綁定，請到 LINE Developers 設定 Webhook，並傳訊息給官方帳號</span>{% endif %}</div><div class="muted">Webhook URL：你的 Railway 網址 + /callback。已啟用：AI省資源掃描模式、省資源排程版、LINE簡化通知省資源版。自動推播：週一～五 09:10 AI持股監控、13:20 AI交易助理進場指令；全市場掃描為週一～五 16:05，盤後不再推播隔日交易計畫。</div></div>
+<div class="mb-3"><a href="/scan-now" class="btn btn-success me-2">送出背景掃描</a><a href="/reset-scan-status" class="btn btn-danger me-2" onclick="return confirm('確定要重置掃描狀態嗎？')">重置掃描狀態</a><button onclick="location.reload()" class="btn btn-main me-2">重新整理</button><a href="/heartbeat" class="btn btn-outline-primary me-2" target="_blank">手動心跳檢查</a><a href="/system-health" class="btn btn-outline-light me-2" target="_blank">系統健康狀態</a><a href="/schedule-health" class="btn btn-outline-light me-2" target="_blank">排程健康檢查</a><a href="/signal-summary" class="btn btn-outline-success me-2" target="_blank">突破策略統計</a><a href="/quote-index" class="btn btn-outline-info me-2" target="_blank">即時大盤資料源</a><a href="/line-test" class="btn btn-yellow me-2">測試LINE通知</a><a href="/line-open-watch" class="btn btn-outline-info me-2">09:10 AI持股監控</a><a href="/line-preclose" class="btn btn-outline-warning me-2">13:20 AI交易助理進場指令</a><a href="/generate-ai-report" class="btn btn-outline-light">產生OpenAI分析報告</a></div>
+<div class="panel"><h5>LINE通知狀態</h5><div>Token：{% if line_token_ready %}<span class="good">已設定</span>{% else %}<span class="bad">未設定</span>{% endif %} ｜ User ID：{% if line_user_ready %}<span class="good">已綁定</span>{% else %}<span class="warning">尚未綁定，請到 LINE Developers 設定 Webhook，並傳訊息給官方帳號</span>{% endif %}</div><div class="muted">Webhook URL：你的 Railway 網址 + /callback。已啟用：突破前高策略驗證版、TWSE/TPEX即時資料源、LINE心跳每小時回報。自動推播：週一～五 09:10 持股監控、13:20 突破回測進場檢查；全市場突破掃描為週一～五 16:05。</div></div>
 <div class="panel">
 <div class="blue">掃描狀態：{{ scan_message }}</div>
 <div class="muted">狀態時間：{{ scan_status_time }} ｜ 狀態代碼：{{ scan_status }}</div>
@@ -96,10 +96,79 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <h4>🔥 族群輪動前5名｜含龍頭強度</h4>
 {% if sector_rankings %}<div class="table-responsive panel"><table class="table table-dark table-bordered align-middle"><thead><tr><th>排名</th><th>族群</th><th>綜合分</th><th>族群狀態</th><th>龍頭狀態</th><th>龍頭參考</th><th>強勢比例</th><th>樣本數</th></tr></thead><tbody>{% for s in sector_rankings[:5] %}<tr><td class="warning">{{ s.rank }}</td><td>{{ s.sector }}</td><td>{{ s.combined_sector_score }}</td><td>{{ s.sector_status }}</td><td>{{ s.leader_status }}</td><td>{{ s.leader_names }}</td><td>{{ s.sector_strong_ratio }}%</td><td>{{ s.sector_stock_count }}</td></tr>{% endfor %}</tbody></table><details><summary>展開完整族群排行</summary><table class="table table-dark table-bordered align-middle mt-2"><thead><tr><th>排名</th><th>族群</th><th>綜合分</th><th>族群狀態</th><th>龍頭狀態</th><th>龍頭參考</th><th>5日均漲幅</th><th>20日均漲幅</th><th>主力均分</th><th>強勢比例</th><th>樣本數</th></tr></thead><tbody>{% for s in sector_rankings %}<tr><td class="warning">{{ s.rank }}</td><td>{{ s.sector }}</td><td>{{ s.combined_sector_score }}</td><td>{{ s.sector_status }}</td><td>{{ s.leader_status }}</td><td>{{ s.leader_names }}</td><td>{{ s.sector_avg_5d }}%</td><td>{{ s.sector_avg_20d }}%</td><td>{{ s.sector_avg_main }}</td><td>{{ s.sector_strong_ratio }}%</td><td>{{ s.sector_stock_count }}</td></tr>{% endfor %}</tbody></table></details></div>{% else %}<div class="panel">目前尚無族群排行資料。</div>{% endif %}<hr>
 
-<h4>📌 AI候選觀察池｜自動追蹤中</h4><div class="muted mb-2">候選池不是叫你現在買；等回採、轉強、風報比與開盤條件成熟後，才會跳到進場提醒。</div>
-{% if candidate_pool %}{% set ready = candidate_pool|selectattr("current_status","equalto","可觀察進場")|list %}{% set pullback = candidate_pool|selectattr("current_status","equalto","等回採")|list %}{% set waitbreak = candidate_pool|selectattr("current_status","equalto","等突破")|list %}{% set waitk = candidate_pool|selectattr("current_status","equalto","等轉強K")|list %}<div class="row">
-{% for title, rows in [("✅ 可觀察進場", ready), ("⏳ 等回採", pullback), ("🚀 等突破", waitbreak), ("📈 等轉強K", waitk)] %}<div class="col-lg-3 col-md-6 mb-3"><div class="panel"><h5>{{ title }}</h5>{% for c in rows[:8] %}<div class="mb-2"><span class="warning">{{ c.name }}</span> {{ c.symbol }}｜{{ c.level }}｜{{ c.buy_type }}<br><span class="muted">進場 {{ c.next_entry_low }}～{{ c.next_entry_high }}｜跌破 {{ c.no_entry_price }}</span></div>{% else %}<div class="muted">目前沒有。</div>{% endfor %}</div></div>{% endfor %}</div>
-<details><summary>展開完整AI候選池資料表</summary><div class="table-responsive mt-2"><table class="table table-dark table-bordered align-middle"><thead><tr><th>股票</th><th>等級</th><th>族群</th><th>族群內排名</th><th>狀態</th><th>執行建議</th><th>買點</th><th>分數</th><th>進場區間</th><th>跌破不進</th><th>停損</th><th>風報比</th><th>週K/日K</th><th>操作</th></tr></thead><tbody>{% for c in candidate_pool %}<tr><td>{{ c.name }}<br><span class="muted">{{ c.symbol }}</span></td><td>{{ c.level }}</td><td>{{ c.sector }}</td><td>{{ c.sector_relative_rank }} / {{ c.sector_relative_total }}<br><span class="muted">{{ c.sector_relative_status }}</span></td><td><span class="warning">{{ c.current_status }}</span></td><td>{{ c.execution_action }}</td><td>{{ c.buy_type }}</td><td>{{ c.score }}</td><td><span class="warning">{{ c.next_entry_low }}～{{ c.next_entry_high }}</span></td><td><span class="bad">{{ c.no_entry_price }}</span></td><td><span class="bad">{{ c.practical_stop }}</span></td><td>{{ c.risk_reward }}</td><td>{{ c.weekly_trend }}<br>{{ c.daily_signal }}</td><td><form method="post" action="/track/{{ c.symbol }}"><input name="actual_price" class="form-control form-control-sm input-dark mb-1" placeholder="成交價"><input name="shares" class="form-control form-control-sm input-dark mb-1" placeholder="股數"><input name="note" class="form-control form-control-sm input-dark mb-1" placeholder="備註"><button type="submit" class="btn btn-yellow btn-sm w-100">追蹤</button></form></td></tr>{% endfor %}</tbody></table></div></details>{% else %}<div class="panel">目前沒有AI候選觀察股。</div>{% endif %}<hr>
+
+<h4>📌 突破前高觀察池｜自動追蹤中</h4>
+<div class="muted mb-2">
+收盤價突破 1月 / 2月 / 3月 / 6月 / 1年 / 3年 / 5年高點才加入。LINE 只提醒「可進場訊號」，開高不追、突破訊號、跌破失敗只留資料庫統計。
+</div>
+{% if candidate_pool %}
+{% set ready = candidate_pool|selectattr("current_status","equalto","可進場訊號")|list %}
+{% set pullback = candidate_pool|selectattr("current_status","equalto","等回測")|list %}
+{% set signal_only = candidate_pool|selectattr("current_status","equalto","突破訊號")|list %}
+{% set failed = candidate_pool|selectattr("current_status","equalto","跌破失敗")|list %}
+<div class="row">
+{% for title, rows in [("🚀 可進場訊號", ready), ("⏳ 等回測 / 開高不追", pullback), ("📌 突破訊號", signal_only), ("❌ 跌破失敗", failed)] %}
+<div class="col-lg-3 col-md-6 mb-3">
+  <div class="panel">
+    <h5>{{ title }}</h5>
+    {% for c in rows[:8] %}
+      <div class="mb-2">
+        <span class="warning">{{ c.name }}</span> {{ c.symbol }}｜{{ c.level }}｜{{ c.highest_breakout_level }}高<br>
+        <span class="muted">突破價 {{ c.breakout_price }}｜進場 {{ c.next_entry_low }}～{{ c.next_entry_high }}</span><br>
+        <span class="muted">下一壓力 {{ c.next_pressure_level }} {{ c.next_pressure_price }}｜距離 {{ c.next_pressure_distance_pct }}%</span>
+      </div>
+    {% else %}
+      <div class="muted">目前沒有。</div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+</div>
+
+<details open>
+<summary>展開完整突破觀察池資料表</summary>
+<div class="table-responsive mt-2">
+<table class="table table-dark table-bordered align-middle">
+<thead>
+<tr>
+<th>股票</th><th>狀態</th><th>等級</th><th>突破級別</th><th>全部突破</th><th>突破價</th><th>收盤/現價</th><th>距離突破</th><th>進場區間</th><th>跌破不進</th><th>停損</th><th>下一壓力</th><th>壓力距離</th><th>量能</th><th>操作</th>
+</tr>
+</thead>
+<tbody>
+{% for c in candidate_pool %}
+<tr>
+<td>{{ c.name }}<br><span class="muted">{{ c.symbol }}</span></td>
+<td><span class="{% if c.current_status == '可進場訊號' %}good{% elif c.current_status == '跌破失敗' %}bad{% else %}warning{% endif %}">{{ c.current_status }}</span><br><span class="muted">{{ c.execution_action }}</span></td>
+<td>{{ c.level }}</td>
+<td>{{ c.highest_breakout_level }}<br><span class="muted">{{ c.buy_type }}</span></td>
+<td>{{ c.breakout_levels }}</td>
+<td><span class="warning">{{ c.breakout_price }}</span></td>
+<td>{{ c.day_close }}</td>
+<td>{{ c.distance_from_breakout_pct }}%</td>
+<td><span class="warning">{{ c.next_entry_low }}～{{ c.next_entry_high }}</span></td>
+<td><span class="bad">{{ c.no_entry_price }}</span></td>
+<td><span class="bad">{{ c.practical_stop }}</span></td>
+<td>{{ c.next_pressure_level }}<br><span class="muted">{{ c.next_pressure_price }}</span></td>
+<td>{{ c.next_pressure_distance_pct }}%<br><span class="muted">{{ c.next_pressure_bucket }}</span></td>
+<td>{{ c.volume_ratio }}倍<br><span class="muted">{{ c.volume_bucket }}</span></td>
+<td>
+<form method="post" action="/track/{{ c.symbol }}">
+<input name="actual_price" class="form-control form-control-sm input-dark mb-1" placeholder="成交價">
+<input name="shares" class="form-control form-control-sm input-dark mb-1" placeholder="股數">
+<input name="note" class="form-control form-control-sm input-dark mb-1" placeholder="備註">
+<button type="submit" class="btn btn-yellow btn-sm w-100">追蹤</button>
+</form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</details>
+{% else %}
+<div class="panel">目前沒有突破前高觀察股。</div>
+{% endif %}
+<hr>
 
 <h4>📊 策略績效摘要</h4><div class="panel"><div class="blue mb-2">{{ strategy_dashboard.ai_summary }}</div><div class="grid-stats"><div class="mini-card"><div class="label">總交易筆數</div><div class="big">{{ strategy_dashboard.total_count }}</div></div><div class="mini-card"><div class="label">勝率</div><div class="big">{{ strategy_dashboard.winrate }}%</div></div><div class="mini-card"><div class="label">總損益</div><div class="big">{{ strategy_dashboard.total_pnl }}</div></div><div class="mini-card"><div class="label">平均報酬率</div><div class="big">{{ strategy_dashboard.avg_return }}%</div></div><div class="mini-card"><div class="label">平均最大浮盈</div><div class="big">{{ strategy_dashboard.avg_max_favorable }}%</div></div><div class="mini-card"><div class="label">平均獲利回吐</div><div class="big">{{ strategy_dashboard.avg_giveback }}%</div></div><div class="mini-card"><div class="label">停損執行參考率</div><div class="big">{{ strategy_dashboard.stop_execution_rate }}%</div></div><div class="mini-card"><div class="label">平均持有天數</div><div class="big">{{ strategy_dashboard.avg_hold_days }}</div></div></div><div class="mt-3">最佳單筆：{{ strategy_dashboard.best_trade }} ｜ 最差單筆：{{ strategy_dashboard.worst_trade }}</div></div>
 <details><summary>展開AI反饋權重與完整策略統計</summary><h5 class="mt-3">🧠 AI反饋權重</h5><div class="panel"><div>{{ strategy_feedback.summary }}</div>{% if strategy_feedback.rows %}<div class="table-responsive mt-2"><table class="table table-dark table-bordered align-middle"><thead><tr><th>分類</th><th>條件</th><th>分數</th><th>筆數</th><th>勝率</th><th>平均報酬</th><th>總損益</th><th>AI判斷</th></tr></thead><tbody>{% for r in strategy_feedback.rows %}<tr><td>{{ r.group }}</td><td>{{ r.name }}</td><td>{% if r.score > 0 %}<span class="good">+{{ r.score }}</span>{% elif r.score < 0 %}<span class="bad">{{ r.score }}</span>{% else %}{{ r.score }}{% endif %}</td><td>{{ r.count }}</td><td>{{ r.winrate }}%</td><td>{{ r.avg_return }}%</td><td>{{ r.total_pnl }}</td><td>{{ r.note }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="muted">目前尚無可套用的AI反饋權重。</div>{% endif %}</div>
