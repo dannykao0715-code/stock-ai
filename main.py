@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "突破前高策略驗證版_2026-07-05"
+APP_VERSION_NAME = "突破前高策略驗證版_收斂條件版_2026-07-05"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -50,10 +50,13 @@ MIN_FEEDBACK_SAMPLE = 3
 # 突破前高策略驗證版設定
 # =====================================================
 BREAKOUT_STRATEGY_VERSION = "breakout_high_validation_v1"
-BREAKOUT_ENTRY_RANGE_PCT = float(os.getenv("BREAKOUT_ENTRY_RANGE_PCT", "0.03"))       # 進場區間：突破價上下3%
+BREAKOUT_ENTRY_UPPER_PCT = float(os.getenv("BREAKOUT_ENTRY_UPPER_PCT", "0.02"))       # 進場上緣：突破價+2%
 BREAKOUT_NO_ENTRY_PCT = float(os.getenv("BREAKOUT_NO_ENTRY_PCT", "0.01"))             # 跌破不進：突破價-1%
 BREAKOUT_STOP_PCT = float(os.getenv("BREAKOUT_STOP_PCT", "0.02"))                     # 實戰停損：突破價-2%或突破K低點
-BREAKOUT_GAP_WATCH_PCT = float(os.getenv("BREAKOUT_GAP_WATCH_PCT", "5"))              # 隔日開高超過5%不追
+BREAKOUT_GAP_WATCH_PCT = float(os.getenv("BREAKOUT_GAP_WATCH_PCT", "3"))              # 超過突破價+3%不追
+BREAKOUT_MIN_ENTRY_DAYS = int(os.getenv("BREAKOUT_MIN_ENTRY_DAYS", "126"))            # 可進場最低突破級別：6個月以上
+BREAKOUT_MIN_PRESSURE_DISTANCE_PCT = float(os.getenv("BREAKOUT_MIN_PRESSURE_DISTANCE_PCT", "3"))
+BREAKOUT_HISTORY_PERIOD = os.getenv("BREAKOUT_HISTORY_PERIOD", "max")                 # 候選股補抓全部歷史資料
 BREAKOUT_MIN_VOLUME_RATIO = float(os.getenv("BREAKOUT_MIN_VOLUME_RATIO", "1.2"))      # 量能確認：20日均量1.2倍
 BREAKOUT_OVERHEAT_VOLUME_RATIO = float(os.getenv("BREAKOUT_OVERHEAT_VOLUME_RATIO", "5"))
 BREAKOUT_MIN_AVG_AMOUNT = float(os.getenv("BREAKOUT_MIN_AVG_AMOUNT", "5000000"))      # 20日均成交金額下限
@@ -2055,7 +2058,7 @@ def format_line_preclose_decision():
         "🕐 13:20 突破前高策略｜進場檢查",
         f"大盤：{scan.get('breakout_market_status', scan.get('market_status', '-'))}",
         f"模式：{scan.get('breakout_market_mode', scan.get('risk_mode', '-'))}",
-        "規則：只提醒回到突破價上下區間的股票；開高超過5%不追。",
+        "規則：只提醒回到突破價～突破價+2%的股票；超過突破價+3%不追。",
     ]
 
     if not candidates:
@@ -2103,7 +2106,7 @@ def format_line_preclose_decision():
             failed_rows.append(f"{name} {symbol}｜現價 {round2(current_price)}｜跌破 {no_entry}")
             continue
 
-        if gap_pct > BREAKOUT_GAP_WATCH_PCT or current_price > entry_high:
+        if current_price > breakout_price * (1 + BREAKOUT_GAP_WATCH_PCT / 100) or current_price > entry_high:
             rec_type = "開高觀察"
             record_breakout_signal(a | {"day_close": current_price, "price": current_price}, rec_type, "開高或價格高於進場區，不追價。")
             if len(watch_rows) < 8:
@@ -3037,147 +3040,185 @@ def next_pressure_bucket(distance_pct, no_pressure=False):
     return "空間大(>15%)"
 
 
+def calc_rsi_series(close, period=14):
+    try:
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(period).mean()
+        avg_loss = loss.rolling(period).mean()
+        rs = avg_gain / avg_loss.replace(0, 0.000001)
+        return 100 - (100 / (1 + rs))
+    except Exception:
+        return pd.Series([], dtype=float)
+
+
+def breakout_auxiliary_filter(df):
+    """
+    輔助判斷：K棒、均線、黃金交叉、背離、成交量。
+    這些不是主策略，只用來加減分與避免明顯爛訊號。
+    主軸仍是：突破前高、到前高位置橫向盤整、突破前高後回採前高進場跌破出場。
+    """
+    out = {
+        "aux_score": 0,
+        "aux_notes": [],
+        "k_pattern": "-",
+        "ma_status": "-",
+        "golden_cross": "否",
+        "divergence_signal": "無明顯背離",
+        "volume_check": "-",
+        "aux_pass": True,
+    }
+    try:
+        if df is None or len(df) < 80:
+            out["aux_notes"].append("輔助資料不足")
+            return out
+        c, h, l, o, v = df["Close"], df["High"], df["Low"], df["Open"], df["Volume"]
+        price = safe_float(c.iloc[-1]); op = safe_float(o.iloc[-1]); hi = safe_float(h.iloc[-1]); lo = safe_float(l.iloc[-1])
+        vol = safe_float(v.iloc[-1]); avg_vol20 = safe_float(v.rolling(20).mean().iloc[-1])
+        ma20s = c.rolling(20).mean(); ma60s = c.rolling(60).mean(); ma120s = c.rolling(120).mean()
+        ma20 = safe_float(ma20s.iloc[-1]); ma60 = safe_float(ma60s.iloc[-1]); ma120 = safe_float(ma120s.iloc[-1]) if len(c) >= 120 else 0
+        if price and ma20 and ma60 and price > ma20 > ma60:
+            out["aux_score"] += 12; out["ma_status"] = "站上20日且20日大於60日"; out["aux_notes"].append("均線偏多")
+        elif price and ma60 and price > ma60:
+            out["aux_score"] += 5; out["ma_status"] = "站上60日"
+        else:
+            out["aux_score"] -= 12; out["ma_status"] = "均線偏弱"; out["aux_notes"].append("均線偏弱")
+        if ma20 and ma60 and ma120 and ma20 > ma60 > ma120:
+            out["aux_score"] += 8; out["aux_notes"].append("多頭排列")
+        if len(ma20s.dropna()) >= 8 and len(ma60s.dropna()) >= 8:
+            if safe_float(ma20s.iloc[-1]) > safe_float(ma60s.iloc[-1]) and safe_float(ma20s.iloc[-6]) <= safe_float(ma60s.iloc[-6]):
+                out["aux_score"] += 10; out["golden_cross"] = "20日線黃金交叉60日線"; out["aux_notes"].append("黃金交叉")
+        full = max(hi - lo, 0.000001); upper_shadow = hi - max(price, op)
+        if price > op and upper_shadow / full <= 0.35:
+            out["aux_score"] += 8; out["k_pattern"] = "紅K突破"; out["aux_notes"].append("紅K突破")
+        elif upper_shadow / full > 0.45:
+            out["aux_score"] -= 15; out["k_pattern"] = "長上影突破，疑似遇壓"; out["aux_notes"].append("長上影")
+        elif price < op:
+            out["aux_score"] -= 8; out["k_pattern"] = "黑K突破，需保守"; out["aux_notes"].append("黑K突破")
+        else:
+            out["k_pattern"] = "K棒普通"
+        vol_ratio = vol / avg_vol20 if avg_vol20 else 0
+        if 1.2 <= vol_ratio < 3:
+            out["aux_score"] += 12; out["volume_check"] = "正常放量"
+        elif 3 <= vol_ratio < 5:
+            out["aux_score"] += 3; out["volume_check"] = "爆量偏熱"; out["aux_notes"].append("爆量偏熱")
+        elif vol_ratio >= 5:
+            out["aux_score"] -= 12; out["volume_check"] = "過度爆量"; out["aux_notes"].append("過度爆量")
+        else:
+            out["aux_score"] -= 10; out["volume_check"] = "量能不足"; out["aux_notes"].append("量能不足")
+        rsi = calc_rsi_series(c, 14)
+        if len(rsi.dropna()) >= 25:
+            recent_price_high = safe_float(h.iloc[-1]); prev_price_high = safe_float(h.iloc[-21:-1].max())
+            recent_rsi = safe_float(rsi.iloc[-1]); prev_rsi_high = safe_float(rsi.iloc[-21:-1].max())
+            if recent_price_high > prev_price_high and recent_rsi < prev_rsi_high - 5:
+                out["aux_score"] -= 12; out["divergence_signal"] = "疑似RSI背離"; out["aux_notes"].append("疑似背離")
+        if out["aux_score"] <= -25:
+            out["aux_pass"] = False
+        out["aux_score"] = round2(out["aux_score"]); out["aux_notes"] = out["aux_notes"][:8]
+        return out
+    except Exception as e:
+        print("breakout_auxiliary_filter failed", e)
+        out["aux_notes"].append("輔助判斷失敗")
+        return out
+
+
 def analyze_breakout_stock(df):
     """
-    核心策略：
-    以最新一日「收盤價」突破前 N 日內高點判斷。
-    注意：前高計算排除最新一日，避免把當天高點算進自己突破自己。
+    以最新一日「收盤價」突破前N日內高點判斷；前高計算排除最新一日。
     """
     if df is None or len(df) < 45:
         return None
-
     c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
-    price = safe_float(c.iloc[-1])
-    last_high = safe_float(h.iloc[-1])
-    last_low = safe_float(l.iloc[-1])
-    last_open = safe_float(df["Open"].iloc[-1])
-    last_vol = safe_float(v.iloc[-1])
-    prev_close = safe_float(c.iloc[-2]) if len(c) >= 2 else 0
-
+    price = safe_float(c.iloc[-1]); last_high = safe_float(h.iloc[-1]); last_low = safe_float(l.iloc[-1])
+    last_open = safe_float(df["Open"].iloc[-1]); last_vol = safe_float(v.iloc[-1]); prev_close = safe_float(c.iloc[-2]) if len(c) >= 2 else 0
     if not price or not last_vol:
         return None
-
     avg_vol20 = safe_float(v.rolling(20).mean().iloc[-1]) if len(v) >= 20 else 0
     avg_amt20 = safe_float((c * v).rolling(20).mean().iloc[-1]) if len(c) >= 20 else 0
     volume_ratio = round2(last_vol / avg_vol20) if avg_vol20 else 0
     volume_bucket = breakout_volume_bucket(volume_ratio)
-
     if avg_vol20 < BREAKOUT_MIN_AVG_VOLUME and avg_amt20 < BREAKOUT_MIN_AVG_AMOUNT:
         return None
-
     highs = []
     for label, days in BREAKOUT_PERIODS:
         ph = previous_period_high(df, days)
         if ph:
             highs.append({"level": label, "days": days, "price": round2(ph), "broken": price > ph})
-
+    all_time_high = None
+    if len(df) >= 252:
+        all_time_high = safe_float(h.iloc[:-1].max())
+        if all_time_high:
+            highs.append({"level": "全部歷史", "days": len(df), "price": round2(all_time_high), "broken": price > all_time_high})
     broken = [x for x in highs if x.get("broken")]
     if not broken:
         return None
-
     highest = broken[-1]
     unbroken = [x for x in highs if not x.get("broken") and x.get("price", 0) > price]
     next_pressure = unbroken[0] if unbroken else None
     no_pressure = next_pressure is None
-
     breakout_price = safe_float(highest["price"])
     distance_from_breakout = round2(pct(price, breakout_price))
     next_pressure_price = round2(next_pressure["price"]) if next_pressure else "-"
     next_pressure_level = next_pressure["level"] if next_pressure else "前方無明顯壓力"
     next_pressure_distance = round2(pct(next_pressure["price"], price)) if next_pressure else 999
     pressure_count_above = len(unbroken)
-
-    entry_low = round2(breakout_price * (1 - BREAKOUT_ENTRY_RANGE_PCT))
-    entry_high = round2(breakout_price * (1 + BREAKOUT_ENTRY_RANGE_PCT))
+    entry_low = round2(breakout_price)
+    entry_high = round2(breakout_price * (1 + BREAKOUT_ENTRY_UPPER_PCT))
     no_entry = round2(breakout_price * (1 - BREAKOUT_NO_ENTRY_PCT))
     stop = round2(min(breakout_price * (1 - BREAKOUT_STOP_PCT), last_low))
     target = round2(next_pressure["price"]) if next_pressure else round2(price * 1.12)
-
-    # 當天收盤後狀態，隔天13:20會再用即時價重新判斷是否提醒。
-    if price < no_entry:
-        current_status = "跌破失敗"
-        execution_action = "不進場"
-    elif price > entry_high or distance_from_breakout > BREAKOUT_GAP_WATCH_PCT:
-        current_status = "等回測"
-        execution_action = "開高不追，等回測"
-    else:
-        current_status = "可進場訊號"
-        execution_action = "可小部位試單"
-
-    # 大盤盤整時，只允許6月以上突破提醒；短週期突破只觀察。
     highest_days = safe_int(highest.get("days", 0))
-    level_score = {"1月": 10, "2月": 20, "3月": 30, "6月": 45, "1年": 60, "3年": 80, "5年": 100}.get(highest["level"], 0)
-    pressure_score = 25 if no_pressure else 15 if next_pressure_distance >= 8 else 5 if next_pressure_distance >= 3 else -10
-    volume_score = 20 if 1.2 <= volume_ratio < 3 else 10 if 3 <= volume_ratio < 5 else -10 if volume_ratio >= 5 else -15
-    heat_penalty = -15 if distance_from_breakout > 8 else -8 if distance_from_breakout > 5 else 0
-    score = round2(level_score + pressure_score + volume_score + heat_penalty)
-
-    level = "S" if score >= 90 else "A" if score >= 55 else "B"
-
+    aux = breakout_auxiliary_filter(df)
+    if price < no_entry:
+        current_status = "跌破失敗"; execution_action = "不進場"
+    elif highest_days < BREAKOUT_MIN_ENTRY_DAYS:
+        current_status = "突破訊號"; execution_action = "1月/2月/3月突破只記錄，不提醒進場"
+    elif (not no_pressure) and next_pressure_distance < BREAKOUT_MIN_PRESSURE_DISTANCE_PCT:
+        current_status = "突破訊號"; execution_action = "下一壓力小於3%，只記錄不提醒"
+    elif volume_ratio < BREAKOUT_MIN_VOLUME_RATIO:
+        current_status = "突破訊號"; execution_action = "量能不足，只記錄不提醒"
+    elif not aux.get("aux_pass", True):
+        current_status = "突破訊號"; execution_action = "輔助條件偏弱，只記錄不提醒"
+    elif price > breakout_price * (1 + BREAKOUT_GAP_WATCH_PCT / 100):
+        current_status = "等回測"; execution_action = "超過突破價3%，開高不追"
+    elif entry_low <= price <= entry_high:
+        current_status = "可進場訊號"; execution_action = "可小部位試單"
+    else:
+        current_status = "等回測"; execution_action = "等待回採突破價"
+    if highest["level"] == "全部歷史":
+        level_score = 120
+    else:
+        level_score = {"1月": 10, "2月": 20, "3月": 30, "6月": 55, "1年": 70, "3年": 90, "5年": 105}.get(highest["level"], 0)
+    pressure_score = 30 if no_pressure else 18 if next_pressure_distance >= 8 else 8 if next_pressure_distance >= 3 else -18
+    volume_score = 20 if 1.2 <= volume_ratio < 3 else 8 if 3 <= volume_ratio < 5 else -15 if volume_ratio >= 5 else -18
+    heat_penalty = -18 if distance_from_breakout > 8 else -10 if distance_from_breakout > 5 else 0
+    score = round2(level_score + pressure_score + volume_score + heat_penalty + safe_float(aux.get("aux_score", 0)))
+    level = "S" if score >= 115 else "A" if score >= 75 else "B"
+    rr = round2(max(target - entry_low, 0.01) / max(entry_low - stop, 0.01))
     return {
-        "price": round2(price),
-        "day_close": round2(price),
-        "day_high": round2(last_high),
-        "day_low": round2(last_low),
-        "open_price": round2(last_open),
-        "prev_close": round2(prev_close),
-        "technical_score": score,
-        "score": score,
-        "level": level,
-        "breakout_strategy_version": BREAKOUT_STRATEGY_VERSION,
-        "breakout_levels": "、".join([x["level"] for x in broken]),
-        "highest_breakout_level": highest["level"],
-        "highest_breakout_days": highest_days,
-        "breakout_price": round2(breakout_price),
-        "support_price": round2(breakout_price),
-        "distance_from_breakout_pct": distance_from_breakout,
-        "next_pressure_level": next_pressure_level,
-        "next_pressure_price": next_pressure_price,
-        "next_pressure_distance_pct": "-" if no_pressure else next_pressure_distance,
-        "next_pressure_bucket": next_pressure_bucket(next_pressure_distance, no_pressure),
-        "pressure_count_above": pressure_count_above,
-        "no_overhead_pressure": no_pressure,
-        "volume_ratio": volume_ratio,
-        "volume_bucket": volume_bucket,
-        "avg_volume_20": round2(avg_vol20),
-        "avg_amount_20": round2(avg_amt20),
-        "next_entry_low": entry_low,
-        "next_entry_high": entry_high,
-        "no_entry_price": no_entry,
-        "invalid_price": no_entry,
-        "practical_stop": stop,
-        "initial_stop": stop,
-        "target_price": target,
-        "risk_reward": round2(max(target - entry_low, 0.01) / max(entry_low - stop, 0.01)),
-        "risk_reward_note": "以前高突破價為停損基準",
-        "risk_reward_group": risk_reward_group(round2(max(target - entry_low, 0.01) / max(entry_low - stop, 0.01))),
-        "buy_type": f"收盤突破{highest['level']}高點",
-        "entry_status": current_status,
-        "current_status": current_status,
-        "execution_action": execution_action,
-        "execution_score": score,
-        "execution_note": f"收盤突破{highest['level']}高點；下一壓力：{next_pressure_level} {next_pressure_price}；量能：{volume_bucket} {volume_ratio}倍",
-        "entry_reason": f"收盤價突破前{highest['level']}高點",
-        "trade_plan_note": "隔天若回到突破價上下3%區間才提醒試單；開高超過5%不追。",
-        "ai_next_action": execution_action,
-        "signals": [f"收盤突破{highest['level']}高點"],
-        "warnings": [] if volume_ratio >= BREAKOUT_MIN_VOLUME_RATIO else ["量能不足"],
-        "weekly_trend": "-",
-        "daily_signal": "突破前高",
-        "sector_relative_rank": "-",
-        "sector_relative_total": "-",
-        "sector_relative_status": "-",
-        "main_score": 0,
-        "combined_sector_score": 0,
-        "leader_score": 0,
-        "sector_status": "-",
-        "leader_status": "-",
-        "leader_names": "-",
-        "candle_signal": "-",
-        "candle_score": 0,
-        "market_status": "-",
+        "price": round2(price), "day_close": round2(price), "day_high": round2(last_high), "day_low": round2(last_low),
+        "open_price": round2(last_open), "prev_close": round2(prev_close), "technical_score": score, "score": score, "level": level,
+        "breakout_strategy_version": BREAKOUT_STRATEGY_VERSION, "breakout_levels": "、".join([x["level"] for x in broken]),
+        "highest_breakout_level": highest["level"], "highest_breakout_days": highest_days, "breakout_price": round2(breakout_price),
+        "support_price": round2(breakout_price), "distance_from_breakout_pct": distance_from_breakout,
+        "next_pressure_level": next_pressure_level, "next_pressure_price": next_pressure_price,
+        "next_pressure_distance_pct": "-" if no_pressure else next_pressure_distance, "next_pressure_bucket": next_pressure_bucket(next_pressure_distance, no_pressure),
+        "pressure_count_above": pressure_count_above, "no_overhead_pressure": no_pressure, "all_time_high_price": round2(all_time_high) if all_time_high else "-",
+        "is_all_time_high_breakout": bool(highest["level"] == "全部歷史"), "volume_ratio": volume_ratio, "volume_bucket": volume_bucket,
+        "avg_volume_20": round2(avg_vol20), "avg_amount_20": round2(avg_amt20), "next_entry_low": entry_low, "next_entry_high": entry_high,
+        "no_entry_price": no_entry, "invalid_price": no_entry, "practical_stop": stop, "initial_stop": stop, "target_price": target,
+        "risk_reward": rr, "risk_reward_note": "突破價～突破價+2%進場，跌破突破價-1%不進", "risk_reward_group": risk_reward_group(rr),
+        "buy_type": f"收盤突破{highest['level']}高點", "entry_status": current_status, "current_status": current_status, "execution_action": execution_action,
+        "execution_score": score, "execution_note": f"收盤突破{highest['level']}高點；下一壓力：{next_pressure_level} {next_pressure_price}；量能：{volume_bucket} {volume_ratio}倍；輔助：{aux.get('aux_score')}",
+        "entry_reason": f"收盤價突破前{highest['level']}高點", "trade_plan_note": "主軸：突破前高、前高盤整、突破回採前高。隔天若回到突破價～突破價+2%才提醒試單；超過突破價+3%不追。",
+        "ai_next_action": execution_action, "signals": [f"收盤突破{highest['level']}高點"], "warnings": [] if volume_ratio >= BREAKOUT_MIN_VOLUME_RATIO else ["量能不足"],
+        "aux_score": aux.get("aux_score", 0), "aux_notes": aux.get("aux_notes", []), "k_pattern": aux.get("k_pattern", "-"), "ma_status": aux.get("ma_status", "-"),
+        "golden_cross": aux.get("golden_cross", "否"), "divergence_signal": aux.get("divergence_signal", "無明顯背離"), "volume_check": aux.get("volume_check", "-"),
+        "weekly_trend": "-", "daily_signal": "突破前高", "sector_relative_rank": "-", "sector_relative_total": "-", "sector_relative_status": "-",
+        "main_score": 0, "combined_sector_score": 0, "leader_score": 0, "sector_status": "-", "leader_status": "-", "leader_names": "-",
+        "candle_signal": aux.get("k_pattern", "-"), "candle_score": aux.get("aux_score", 0), "market_status": "-",
     }
-
 
 def record_breakout_signal(item, signal_type="突破訊號", note=""):
     price = safe_float(item.get("day_close", 0)) or safe_float(item.get("price", 0))
@@ -3205,6 +3246,14 @@ def record_breakout_signal(item, signal_type="突破訊號", note=""):
             "pressure_count_above": item.get("pressure_count_above", "-"),
             "volume_ratio": item.get("volume_ratio", "-"),
             "volume_bucket": item.get("volume_bucket", "-"),
+            "is_all_time_high_breakout": item.get("is_all_time_high_breakout", False),
+            "all_time_high_price": item.get("all_time_high_price", "-"),
+            "k_pattern": item.get("k_pattern", "-"),
+            "ma_status": item.get("ma_status", "-"),
+            "golden_cross": item.get("golden_cross", "-"),
+            "divergence_signal": item.get("divergence_signal", "-"),
+            "aux_score": item.get("aux_score", "-"),
+            "aux_notes": item.get("aux_notes", []),
             "current_status": item.get("current_status", "-"),
             "execution_action": item.get("execution_action", "-"),
         },
@@ -3273,14 +3322,14 @@ def scan_market():
 
             rough_count += 1
 
-            # 有突破候選才補抓5年，用來判斷3年/5年突破與歷史壓力。
+            # 有突破候選才補抓全部歷史，用來判斷「全部歷史高點 / 歷史新高」與長期壓力。
             try:
-                df5 = download_stock(sym, "5y")
-                res5 = analyze_breakout_stock(df5)
-                if res5:
-                    res = res5
+                df_hist = download_stock(sym, BREAKOUT_HISTORY_PERIOD)
+                res_hist = analyze_breakout_stock(df_hist)
+                if res_hist:
+                    res = res_hist
             except Exception as e:
-                print("5y breakout refine failed", sym, e)
+                print("history breakout refine failed", sym, e)
 
             item = {
                 "symbol": sym,
@@ -3299,10 +3348,10 @@ def scan_market():
                 item["current_status"] = "突破訊號"
                 item["entry_status"] = "突破訊號"
                 item["execution_action"] = "大盤空頭，只記錄不進場"
-            elif breakout_market.get("breakout_market_status") == "盤整" and safe_int(item.get("highest_breakout_days", 0)) < 126:
+            elif breakout_market.get("breakout_market_status") == "盤整" and safe_int(item.get("highest_breakout_days", 0)) < BREAKOUT_MIN_ENTRY_DAYS:
                 item["current_status"] = "突破訊號"
                 item["entry_status"] = "突破訊號"
-                item["execution_action"] = "大盤盤整，短週期突破只觀察"
+                item["execution_action"] = "大盤盤整，未達6月以上突破只觀察"
             elif item.get("current_status") == "可進場訊號" and safe_float(item.get("volume_ratio", 0)) < BREAKOUT_MIN_VOLUME_RATIO:
                 item["current_status"] = "突破訊號"
                 item["entry_status"] = "突破訊號"
