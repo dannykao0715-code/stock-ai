@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "突破前高策略驗證版_收斂條件版_2026-07-05"
+APP_VERSION_NAME = "價值分析_低估重估潛力股系統_2026-07-05"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -47,30 +47,20 @@ MIN_AVG_AMOUNT_20 = 5_000_000
 MIN_FEEDBACK_SAMPLE = 3
 
 # =====================================================
-# 突破前高策略驗證版設定
+# 價值分析｜低估重估潛力股模型設定
 # =====================================================
-BREAKOUT_STRATEGY_VERSION = "breakout_high_validation_v1"
-BREAKOUT_ENTRY_UPPER_PCT = float(os.getenv("BREAKOUT_ENTRY_UPPER_PCT", "0.02"))       # 進場上緣：突破價+2%
-BREAKOUT_NO_ENTRY_PCT = float(os.getenv("BREAKOUT_NO_ENTRY_PCT", "0.01"))             # 跌破不進：突破價-1%
-BREAKOUT_STOP_PCT = float(os.getenv("BREAKOUT_STOP_PCT", "0.02"))                     # 實戰停損：突破價-2%或突破K低點
-BREAKOUT_GAP_WATCH_PCT = float(os.getenv("BREAKOUT_GAP_WATCH_PCT", "3"))              # 超過突破價+3%不追
-BREAKOUT_MIN_ENTRY_DAYS = int(os.getenv("BREAKOUT_MIN_ENTRY_DAYS", "126"))            # 可進場最低突破級別：6個月以上
-BREAKOUT_MIN_PRESSURE_DISTANCE_PCT = float(os.getenv("BREAKOUT_MIN_PRESSURE_DISTANCE_PCT", "3"))
-BREAKOUT_HISTORY_PERIOD = os.getenv("BREAKOUT_HISTORY_PERIOD", "max")                 # 候選股補抓全部歷史資料
-BREAKOUT_MIN_VOLUME_RATIO = float(os.getenv("BREAKOUT_MIN_VOLUME_RATIO", "1.2"))      # 量能確認：20日均量1.2倍
-BREAKOUT_OVERHEAT_VOLUME_RATIO = float(os.getenv("BREAKOUT_OVERHEAT_VOLUME_RATIO", "5"))
-BREAKOUT_MIN_AVG_AMOUNT = float(os.getenv("BREAKOUT_MIN_AVG_AMOUNT", "5000000"))      # 20日均成交金額下限
-BREAKOUT_MIN_AVG_VOLUME = float(os.getenv("BREAKOUT_MIN_AVG_VOLUME", "500000"))       # 20日均量下限，股數
+VALUE_MODEL_VERSION = "value_repricing_model_v1"
+VALUE_SCAN_LIMIT = int(os.getenv("VALUE_SCAN_LIMIT", "350"))               # 每次深入基本面掃描最多檔數，避免Railway卡住
+VALUE_SCORE_BUY = float(os.getenv("VALUE_SCORE_BUY", "85"))                # 買進提醒分數
+VALUE_SCORE_WATCH = float(os.getenv("VALUE_SCORE_WATCH", "75"))            # 觀察分數
+VALUE_MIN_UPSIDE_PCT = float(os.getenv("VALUE_MIN_UPSIDE_PCT", "100"))     # 目標找翻倍空間
+VALUE_MIN_UNDERVALUE_SCORE = float(os.getenv("VALUE_MIN_UNDERVALUE_SCORE", "15"))
+VALUE_MIN_CATALYST_SCORE = float(os.getenv("VALUE_MIN_CATALYST_SCORE", "15"))
+VALUE_MAX_ALERTS = int(os.getenv("VALUE_MAX_ALERTS", "5"))
+VALUE_SLEEP = float(os.getenv("VALUE_SLEEP", "0.25"))
 
-BREAKOUT_PERIODS = [
-    ("1月", 21),
-    ("2月", 42),
-    ("3月", 63),
-    ("6月", 126),
-    ("1年", 252),
-    ("3年", 756),
-    ("5年", 1260),
-]
+# LINE只顯示結論，詳細數據留後台
+VALUE_LINE_DETAIL_ENABLED = os.getenv("VALUE_LINE_DETAIL_ENABLED", "0") == "1"
 
 # =====================================================
 # AI交易助理正式驗證版設定
@@ -1419,21 +1409,17 @@ def record_loose_observation_signals(candidates):
 
 def evaluate_signal_database():
     """
-    每次盤後掃描時更新訊號結果：
-    - 突破訊號：收盤突破前高，先記錄樣本
-    - 可進場訊號：隔天價格回到突破價區間，才提醒試單
-    - 開高觀察：開高超過設定值，不追高，只追蹤
-    - 跌破失敗：跌破突破價/停損，記錄失敗
-    - 舊版 entry/watch 仍保留評估，避免舊資料不能看
+    更新訊號績效：
+    價值分析版主要追蹤買進提醒後 30/60/120/240 個交易日績效。
+    仍保留舊版 entry/watch 評估，避免舊資料不能看。
     """
     try:
         db = load_signal_database()
         signals = db.get("signals", [])
         changed = False
-        eval_types = ["entry", "watch", "突破訊號", "可進場訊號", "開高觀察", "跌破失敗"]
 
         for rec in signals:
-            if rec.get("signal_type") not in eval_types:
+            if rec.get("signal_type") not in ["買進提醒", "停利提醒", "賣出提醒", "entry", "watch"]:
                 continue
 
             symbol = rec.get("symbol")
@@ -1446,7 +1432,7 @@ def evaluate_signal_database():
             except Exception:
                 continue
 
-            df = download_stock(symbol, "3mo")
+            df = download_stock(symbol, "2y")
             if df is None or df.empty:
                 continue
 
@@ -1455,10 +1441,19 @@ def evaluate_signal_database():
                 continue
 
             result = rec.get("result", {})
-            stop = safe_float(rec.get("stop", 0))
-            target = safe_float(rec.get("target", 0))
-            breakout_price = safe_float(rec.get("breakout_price", rec.get("support_price", 0)))
 
+            for days in [30, 60, 120, 240]:
+                if len(after) >= days:
+                    window = after.head(days)
+                    close_px = safe_float(window["Close"].iloc[-1])
+                    high_px = safe_float(window["High"].max())
+                    low_px = safe_float(window["Low"].min())
+                    result[f"return_{days}d_pct"] = round2(pct(close_px, price))
+                    result[f"max_up_{days}d_pct"] = round2(pct(high_px, price))
+                    result[f"max_down_{days}d_pct"] = round2(pct(low_px, price))
+                    result[f"close_{days}d"] = round2(close_px)
+
+            # 舊版短天期欄位也保留
             for days in [3, 5, 10]:
                 if len(after) >= days:
                     window = after.head(days)
@@ -1470,16 +1465,7 @@ def evaluate_signal_database():
                     result[f"max_down_{days}d_pct"] = round2(pct(low_px, price))
                     result[f"close_{days}d"] = round2(close_px)
 
-            if stop:
-                result["hit_stop"] = bool(safe_float(after["Low"].min()) <= stop)
-
-            if target:
-                result["hit_target"] = bool(safe_float(after["High"].max()) >= target)
-
-            if breakout_price:
-                result["fell_back_below_breakout"] = bool(safe_float(after["Close"].min()) < breakout_price * 0.99)
-
-            if len(after) >= 10:
+            if len(after) >= 240:
                 rec["evaluated"] = True
 
             rec["result"] = result
@@ -1496,85 +1482,76 @@ def signal_summary_text():
     db = load_signal_database()
     signals = db.get("signals", [])
 
-    def by_type(t):
+    def rows(t):
         return [x for x in signals if x.get("signal_type") == t]
 
-    groups = [
-        ("突破訊號", by_type("突破訊號")),
-        ("可進場訊號", by_type("可進場訊號")),
-        ("開高觀察", by_type("開高觀察")),
-        ("跌破失敗", by_type("跌破失敗")),
-        ("舊版嚴格C級 entry", by_type("entry")),
-        ("舊版寬鬆觀察 watch", by_type("watch")),
-    ]
+    buy_rows = rows("買進提醒")
+    take_profit_rows = rows("停利提醒")
+    sell_rows = rows("賣出提醒")
+    old_entry = rows("entry")
+    old_watch = rows("watch")
 
-    holdings = by_type("holding")
+    def done(arr, key):
+        return [x for x in arr if x.get("result", {}).get(key) is not None]
 
-    def done(rows, key):
-        return [x for x in rows if x.get("result", {}).get(key) is not None]
-
-    def avg_return(rows, key):
-        rows = done(rows, key)
-        if not rows:
+    def avg_return(arr, key):
+        arr = done(arr, key)
+        if not arr:
             return 0
-        return round2(sum(safe_float(x.get("result", {}).get(key, 0)) for x in rows) / len(rows))
+        return round2(sum(safe_float(x.get("result", {}).get(key, 0)) for x in arr) / len(arr))
 
-    def win_rate(rows, key):
-        rows = done(rows, key)
-        if not rows:
+    def win_rate(arr, key):
+        arr = done(arr, key)
+        if not arr:
             return 0
-        return round2(len([x for x in rows if safe_float(x.get("result", {}).get(key, 0)) > 0]) / len(rows) * 100)
+        return round2(len([x for x in arr if safe_float(x.get("result", {}).get(key, 0)) > 0]) / len(arr) * 100)
 
-    def block(title, rows):
+    def block(title, arr):
         return (
             f"{title}\n"
-            f"累積：{len(rows)} 筆\n"
-            f"3日：{len(done(rows, 'return_3d_pct'))} 筆｜均報 {avg_return(rows, 'return_3d_pct')}%｜勝率 {win_rate(rows, 'return_3d_pct')}%\n"
-            f"5日：{len(done(rows, 'return_5d_pct'))} 筆｜均報 {avg_return(rows, 'return_5d_pct')}%｜勝率 {win_rate(rows, 'return_5d_pct')}%\n"
-            f"10日：{len(done(rows, 'return_10d_pct'))} 筆｜均報 {avg_return(rows, 'return_10d_pct')}%｜勝率 {win_rate(rows, 'return_10d_pct')}%\n"
+            f"累積：{len(arr)} 筆\n"
+            f"30日：{len(done(arr, 'return_30d_pct'))} 筆｜均報 {avg_return(arr, 'return_30d_pct')}%｜勝率 {win_rate(arr, 'return_30d_pct')}%\n"
+            f"60日：{len(done(arr, 'return_60d_pct'))} 筆｜均報 {avg_return(arr, 'return_60d_pct')}%｜勝率 {win_rate(arr, 'return_60d_pct')}%\n"
+            f"120日：{len(done(arr, 'return_120d_pct'))} 筆｜均報 {avg_return(arr, 'return_120d_pct')}%｜勝率 {win_rate(arr, 'return_120d_pct')}%\n"
+            f"240日：{len(done(arr, 'return_240d_pct'))} 筆｜均報 {avg_return(arr, 'return_240d_pct')}%｜勝率 {win_rate(arr, 'return_240d_pct')}%\n"
         )
 
-    def group_perf(rows, group_key, title):
+    def group_perf(arr, key, title):
         mp = {}
-        for r in rows:
-            v = r.get(group_key) or "未分類"
-            mp.setdefault(v, []).append(r)
+        for r in arr:
+            name = r.get(key) or "未分類"
+            mp.setdefault(name, []).append(r)
         out = [f"\n{title}"]
         if not mp:
             out.append("尚無資料")
             return "\n".join(out)
-        for name, arr in sorted(mp.items(), key=lambda kv: len(kv[1]), reverse=True)[:20]:
+        for name, a in sorted(mp.items(), key=lambda kv: len(kv[1]), reverse=True)[:20]:
             out.append(
-                f"{name}｜樣本 {len(arr)}｜5日 {len(done(arr, 'return_5d_pct'))} 筆｜"
-                f"均報 {avg_return(arr, 'return_5d_pct')}%｜勝率 {win_rate(arr, 'return_5d_pct')}%"
+                f"{name}｜樣本 {len(a)}｜120日 {len(done(a, 'return_120d_pct'))} 筆｜"
+                f"均報 {avg_return(a, 'return_120d_pct')}%｜勝率 {win_rate(a, 'return_120d_pct')}%"
             )
         return "\n".join(out)
 
-    breakout_rows = by_type("突破訊號") + by_type("可進場訊號") + by_type("開高觀察")
-
-    rows = [
-        "突破前高策略驗證版｜訊號績效統計",
+    out = [
+        "價值分析｜低估重估潛力股系統績效統計",
         f"版本：{APP_VERSION_NAME}",
-        f"策略版本：{BREAKOUT_STRATEGY_VERSION}",
-        f"驗證模式：{'開啟' if VALIDATION_MODE else '關閉'}",
-        f"持股風控訊號：{len(holdings)} 筆",
+        f"模型版本：{VALUE_MODEL_VERSION}",
         "",
+        block("買進提醒", buy_rows),
+        block("停利提醒", take_profit_rows),
+        block("賣出提醒", sell_rows),
+        block("舊版進場 entry", old_entry),
+        block("舊版觀察 watch", old_watch),
+        "說明：",
+        "買進提醒：系統判斷低估轉強且具備重估空間，只提醒可分批買進。",
+        "停利提醒：估值偏高或潛在空間不足，提醒分批停利。",
+        "賣出提醒：基本面轉弱或原始買進邏輯破壞，提醒減碼或出場。",
+        group_perf(buy_rows, "level", "依等級統計"),
+        group_perf(buy_rows, "industry", "依產業統計"),
+        group_perf(buy_rows, "upside_bucket", "依潛在空間統計"),
+        group_perf(buy_rows, "undervalue_bucket", "依低估程度統計"),
     ]
-
-    for title, arr in groups:
-        rows.append(block(title, arr))
-
-    rows.append("中文分類說明：")
-    rows.append("突破訊號：盤後收盤價突破指定週期前高，自動記錄樣本，不代表可買。")
-    rows.append("可進場訊號：隔天價格回到突破價上下區間，才提醒小部位試單。")
-    rows.append("開高觀察：隔天開高超過設定值，不追價，只持續追蹤。")
-    rows.append("跌破失敗：跌破突破價或停損價，記錄失敗樣本。")
-    rows.append(group_perf(breakout_rows, "highest_breakout_level", "依最高突破級別統計"))
-    rows.append(group_perf(breakout_rows, "next_pressure_bucket", "依下一壓力距離統計"))
-    rows.append(group_perf(breakout_rows, "volume_bucket", "依成交量倍率統計"))
-    rows.append(group_perf(breakout_rows, "market_status", "依大盤狀態統計"))
-
-    return "\n".join(rows)
+    return "\n".join(out)
 
 def default_strategy_weights():
     return {
@@ -1941,25 +1918,23 @@ def format_line_entry_alerts():
 
     if not alerts:
         return (
-            "🚀 突破前高策略｜進場提醒\n"
-            "目前沒有「可進場訊號」。\n"
-            "突破訊號會留在網站與資料庫追蹤，不會亂通知。"
+            "【價值分析買進提醒】\n"
+            "目前沒有符合買進條件的低估重估股。\n"
+            "系統會持續掃描，沒機會就不通知。"
         )
 
-    rows = ["🚀 突破前高策略｜只顯示可進場訊號"]
+    rows = ["【價值分析買進提醒】"]
 
-    for a in alerts[:8]:
-        name = a.get("name", "-")
-        symbol = short_symbol(a.get("symbol", ""))
+    for a in alerts[:VALUE_MAX_ALERTS]:
         rows.append(
-            f"\n🚀 可進場訊號｜{a.get('level','-')}級\n"
-            f"{name} {symbol}\n"
-            f"突破：{a.get('highest_breakout_level','-')}高點｜突破價：{a.get('breakout_price','-')}\n"
-            f"進場區：{a.get('next_entry_low','-')} ～ {a.get('next_entry_high','-')}\n"
-            f"跌破不進：{a.get('no_entry_price','-')}｜停損：{a.get('practical_stop','-')}\n"
-            f"下一壓力：{a.get('next_pressure_level','-')} {a.get('next_pressure_price','-')}｜距離：{a.get('next_pressure_distance_pct','-')}%\n"
-            f"量能：{a.get('volume_bucket','-')}｜{a.get('volume_ratio','-')}倍"
+            f"\n股票：{a.get('name','-')} {short_symbol(a.get('symbol',''))}\n"
+            f"判斷：低估轉強，具備重估空間\n"
+            f"建議：可分批買進"
         )
+        if VALUE_LINE_DETAIL_ENABLED:
+            rows.append(
+                f"分數：{a.get('score','-')}｜合理價：{a.get('fair_value','-')}｜潛在空間：{a.get('upside_pct','-')}%"
+            )
 
     return "\n".join(rows)
 
@@ -1984,12 +1959,13 @@ def format_line_daily_review():
 
 
 
+
 def format_line_open_watch():
     tracks = load_track()
 
     rows = [
-        "🌅 09:10 AI持股監控",
-        "只通知需要處理的持股；一般續抱不打擾。"
+        "【價值分析持股監控】",
+        "只在持股出現停利或賣出條件時提醒。"
     ]
 
     if not tracks:
@@ -2001,147 +1977,45 @@ def format_line_open_watch():
 
     for t in tracks:
         try:
-            df = download_stock(t["symbol"], "1y")
-            t = manage_holding(t, df)
-        except Exception:
-            pass
+            chk = value_sell_check_for_holding(t)
+            item = chk.get("item", {})
+            if chk.get("alert"):
+                signal_type = chk.get("type", "賣出提醒")
+                record_value_signal(signal_type, item, chk.get("reason", ""))
 
-        level, action, icon, simple_note = classify_holding_line_action(t)
-
-        if level == "D":
+                if signal_type == "停利提醒":
+                    action_rows.append(
+                        f"\n【停利提醒】\n"
+                        f"股票：{item.get('name', t.get('name','-'))} {short_symbol(t.get('symbol',''))}\n"
+                        f"判斷：估值偏高，潛在空間不足\n"
+                        f"建議：分批停利"
+                    )
+                else:
+                    action_rows.append(
+                        f"\n【賣出提醒】\n"
+                        f"股票：{item.get('name', t.get('name','-'))} {short_symbol(t.get('symbol',''))}\n"
+                        f"判斷：基本面轉弱 / 原始邏輯破壞\n"
+                        f"建議：減碼或出場"
+                    )
+            else:
+                silent_count += 1
+        except Exception as e:
+            print("value holding check failed", t.get("symbol"), e)
             silent_count += 1
-            continue
-
-        curr = safe_float(t.get("curr", 0))
-
-        record_ai_signal(
-            "holding",
-            t,
-            level,
-            action,
-            curr,
-            simple_note,
-            extra={
-                "pnl": t.get("pnl", "-"),
-                "cost": t.get("price", "-"),
-                "support": t.get("support_price", "-"),
-                "trail_range": t.get("trail_range", "-"),
-            },
-        )
-
-        action_rows.append(
-            f"\n{icon} {level}級｜{action}\n"
-            f"{t.get('name','-')} {short_symbol(t.get('symbol',''))}\n"
-            f"現價：{t.get('curr','-')}｜成本：{t.get('price','-')}｜損益：{t.get('pnl','-')}%\n"
-            f"停損：{t.get('practical_stop','-')}｜支撐：{t.get('support_price','-')}\n"
-            f"風控：{t.get('trail_range','-')}\n"
-            f"原因：{simple_note}"
-        )
 
     if action_rows:
-        rows.append("\n以下持股需要處理：")
         rows.extend(action_rows)
         if silent_count:
-            rows.append(f"\n其餘 {silent_count} 檔為D級觀察，系統已自動監控，不另外通知。")
+            rows.append(f"\n其餘 {silent_count} 檔尚未觸發賣出或停利條件。")
     else:
-        rows.append("\n目前沒有A/B/C級持股警示。")
-        rows.append("D級續抱股由系統自行觀察，不另外通知。")
+        rows.append("\n目前沒有持股需要處理。")
 
     return "\n".join(rows)
 
 
 def format_line_preclose_decision():
-    scan = load_scan_results()
-    candidates = scan.get("candidate_pool", [])
-
-    rows = [
-        "🕐 13:20 突破前高策略｜進場檢查",
-        f"大盤：{scan.get('breakout_market_status', scan.get('market_status', '-'))}",
-        f"模式：{scan.get('breakout_market_mode', scan.get('risk_mode', '-'))}",
-        "規則：只提醒回到突破價～突破價+2%的股票；超過突破價+3%不追。",
-    ]
-
-    if not candidates:
-        rows.append("\n目前沒有突破前高觀察股。")
-        return "\n".join(rows)
-
-    trial_rows = []
-    watch_rows = []
-    failed_rows = []
-
-    for a in candidates[:60]:
-        symbol_full = a.get("symbol")
-        name = a.get("name", "-")
-        symbol = short_symbol(symbol_full or "")
-        entry_low = safe_float(a.get("next_entry_low", 0))
-        entry_high = safe_float(a.get("next_entry_high", 0))
-        no_entry = safe_float(a.get("no_entry_price", 0))
-        stop = safe_float(a.get("practical_stop", 0)) or no_entry
-        breakout_price = safe_float(a.get("breakout_price", 0))
-        prev_close = safe_float(a.get("day_close", 0)) or safe_float(a.get("price", 0))
-
-        current_price = 0
-        try:
-            q = get_realtime_price(symbol_full)
-            if q and q.get("price"):
-                current_price = safe_float(q.get("price", 0))
-        except Exception:
-            current_price = 0
-
-        if not current_price:
-            try:
-                df = download_stock(symbol_full, "5d")
-                current_price = safe_float(df["Close"].iloc[-1]) if df is not None and not df.empty else 0
-            except Exception:
-                current_price = 0
-
-        if not current_price or not entry_low or not entry_high or not no_entry:
-            continue
-
-        gap_pct = round2(pct(current_price, prev_close)) if prev_close else 0
-
-        if current_price < no_entry or current_price <= stop:
-            rec_type = "跌破失敗"
-            record_breakout_signal(a | {"day_close": current_price, "price": current_price}, rec_type, "跌破突破價或停損價，記錄失敗樣本。")
-            failed_rows.append(f"{name} {symbol}｜現價 {round2(current_price)}｜跌破 {no_entry}")
-            continue
-
-        if current_price > breakout_price * (1 + BREAKOUT_GAP_WATCH_PCT / 100) or current_price > entry_high:
-            rec_type = "開高觀察"
-            record_breakout_signal(a | {"day_close": current_price, "price": current_price}, rec_type, "開高或價格高於進場區，不追價。")
-            if len(watch_rows) < 8:
-                watch_rows.append(f"{name} {symbol}｜現價 {round2(current_price)}｜開高/距離 {gap_pct}%｜等回測 {entry_low}~{entry_high}")
-            continue
-
-        if entry_low <= current_price <= entry_high and current_price > no_entry:
-            rec_type = "可進場訊號"
-            record_breakout_signal(a | {"day_close": current_price, "price": current_price}, rec_type, "價格回到突破價區間，可小部位試單。")
-            trial_rows.append(
-                f"\n🚀 可進場訊號｜{a.get('level','-')}級\n"
-                f"{name} {symbol}\n"
-                f"現價：{round2(current_price)}｜突破價：{a.get('breakout_price','-')}\n"
-                f"進場區：{a.get('next_entry_low','-')} ～ {a.get('next_entry_high','-')}\n"
-                f"跌破不進：{a.get('no_entry_price','-')}｜停損：{a.get('practical_stop','-')}\n"
-                f"突破級別：{a.get('highest_breakout_level','-')}｜全部突破：{a.get('breakout_levels','-')}\n"
-                f"下一壓力：{a.get('next_pressure_level','-')} {a.get('next_pressure_price','-')}｜距離：{a.get('next_pressure_distance_pct','-')}%\n"
-                f"量能：{a.get('volume_bucket','-')}｜{a.get('volume_ratio','-')}倍"
-            )
-
-    if trial_rows:
-        rows.append("\n以下為可小部位試單：")
-        rows.extend(trial_rows[:MAX_ENTRY_ALERTS])
-    else:
-        rows.append("\n目前沒有價格落在進場區的股票。")
-
-    if watch_rows:
-        rows.append("\n開高/高於進場區，不追價：")
-        rows.extend(watch_rows)
-
-    if failed_rows:
-        rows.append("\n跌破失敗，取消進場：")
-        rows.extend(failed_rows[:8])
-
-    return "\n".join(rows)
+    # 13:20 不再做短線技術進場，改成價值分析買進提醒。
+    return format_line_entry_alerts()
 
 def format_line_message(mode="all"):
     if mode == "open":
@@ -2951,277 +2825,580 @@ def failure_type(item):
 
 
 
-def breakout_market_simple_status(index_symbol):
+def yf_info(symbol):
     """
-    簡化大盤多空：只用收盤、20日線、60日線、近20日低點。
-    保留原本 market_status() 供首頁其他欄位使用，這裡只做突破策略的濾網。
+    從 yfinance 抓基本面資料。
+    注意：台股基本面資料可能不完整，所以所有欄位都要允許缺值。
     """
     try:
-        df = download_stock(index_symbol, "6mo")
-        if df is None or len(df) < 70:
-            return {"ok": False, "status": "資料不足", "score": 0}
-
-        c = df["Close"]
-        price = safe_float(c.iloc[-1])
-        ma20 = safe_float(c.rolling(20).mean().iloc[-1])
-        ma60 = safe_float(c.rolling(60).mean().iloc[-1])
-        low20 = safe_float(df["Low"].rolling(20).min().iloc[-2])
-
-        if price > ma20 and ma20 > ma60 and price > low20:
-            return {"ok": True, "status": "多頭", "score": 2}
-        if price < ma60 or price < low20:
-            return {"ok": True, "status": "空頭", "score": -2}
-        return {"ok": True, "status": "盤整", "score": 0}
+        return yf.Ticker(symbol).info or {}
     except Exception as e:
-        print("breakout_market_simple_status failed", index_symbol, e)
-        return {"ok": False, "status": "資料不足", "score": 0}
+        print("yf_info failed", symbol, e)
+        return {}
 
 
-def breakout_market_filter():
-    twii = breakout_market_simple_status("^TWII")
-    otc = breakout_market_simple_status("^TWOII")
-    score = twii.get("score", 0) + otc.get("score", 0)
+def value_bucket_upside(upside):
+    u = safe_float(upside, 0)
+    if u >= 200:
+        return "潛在空間>200%"
+    if u >= 150:
+        return "潛在空間150~200%"
+    if u >= 100:
+        return "潛在空間100~150%"
+    if u >= 50:
+        return "潛在空間50~100%"
+    return "潛在空間不足"
 
-    if score >= 2:
-        status = "多頭"
-        allow = True
-        mode = "允許進場"
-        note = "加權/櫃買至少一方偏多，允許突破回測試單。"
-    elif score <= -2:
-        status = "空頭"
-        allow = False
-        mode = "只記錄不進場"
-        note = "大盤偏空，只記錄突破訊號，不發進場提醒。"
+
+def undervalue_bucket(pe, fair_pe):
+    pe = safe_float(pe, 0)
+    fair_pe = safe_float(fair_pe, 0)
+    if not pe or not fair_pe:
+        return "估值資料不足"
+    ratio = pe / fair_pe
+    if ratio <= 0.55:
+        return "明顯低估"
+    if ratio <= 0.75:
+        return "低估"
+    if ratio <= 1:
+        return "合理偏低"
+    if ratio <= 1.25:
+        return "合理偏高"
+    return "偏貴"
+
+
+def estimate_fair_pe(info, industry=""):
+    """
+    估算合理本益比，不追求精準，只做相對估值。
+    產業與獲利能力較強給較高估值，財務/成長弱則降低。
+    """
+    gross = safe_float(info.get("grossMargins", 0)) * 100
+    opm = safe_float(info.get("operatingMargins", 0)) * 100
+    roe = safe_float(info.get("returnOnEquity", 0)) * 100
+    revenue_growth = safe_float(info.get("revenueGrowth", 0)) * 100
+    earnings_growth = safe_float(info.get("earningsGrowth", 0)) * 100
+
+    pe = 12
+    if gross >= 35:
+        pe += 5
+    if opm >= 15:
+        pe += 4
+    if roe >= 15:
+        pe += 4
+    if revenue_growth >= 20:
+        pe += 4
+    if earnings_growth >= 25:
+        pe += 5
+
+    hot_keywords = ["半導體", "AI", "伺服", "散熱", "電源", "電子", "光電", "通訊", "資訊", "雲端", "車用", "航太", "材料"]
+    if any(k in str(industry) for k in hot_keywords):
+        pe += 3
+
+    return max(8, min(pe, 35))
+
+
+def score_financial_safety(info):
+    score = 0
+    notes = []
+
+    debt = safe_float(info.get("debtToEquity", 0))
+    current_ratio = safe_float(info.get("currentRatio", 0))
+    op_cash = safe_float(info.get("operatingCashflow", 0))
+    free_cash = safe_float(info.get("freeCashflow", 0))
+    total_cash = safe_float(info.get("totalCash", 0))
+    total_debt = safe_float(info.get("totalDebt", 0))
+
+    if debt and debt < 80:
+        score += 4
+        notes.append("負債合理")
+    elif debt and debt > 150:
+        score -= 4
+        notes.append("負債偏高")
     else:
-        status = "盤整"
-        allow = True
-        mode = "只做高級別突破"
-        note = "大盤盤整，只允許6月以上高點突破進場提醒。"
+        score += 2
 
-    return {
-        "breakout_market_twii": twii.get("status", "-"),
-        "breakout_market_otc": otc.get("status", "-"),
-        "breakout_market_status": status,
-        "breakout_market_mode": mode,
-        "breakout_allow_entry": allow,
-        "breakout_market_note": note,
+    if current_ratio and current_ratio >= 1.5:
+        score += 3
+        notes.append("流動性尚可")
+    elif current_ratio and current_ratio < 1:
+        score -= 3
+        notes.append("流動比率偏低")
+    else:
+        score += 1
+
+    if op_cash and op_cash > 0:
+        score += 4
+        notes.append("營業現金流為正")
+    else:
+        score -= 3
+        notes.append("營業現金流不足")
+
+    if free_cash and free_cash > 0:
+        score += 2
+    if total_cash and total_debt and total_cash > total_debt * 0.5:
+        score += 2
+
+    return max(0, min(15, round2(score))), notes
+
+
+def score_profit_quality(info):
+    score = 0
+    notes = []
+
+    eps = safe_float(info.get("trailingEps", 0))
+    gross = safe_float(info.get("grossMargins", 0)) * 100
+    opm = safe_float(info.get("operatingMargins", 0)) * 100
+    npm = safe_float(info.get("profitMargins", 0)) * 100
+    roe = safe_float(info.get("returnOnEquity", 0)) * 100
+    earnings_growth = safe_float(info.get("earningsGrowth", 0)) * 100
+
+    if eps > 0:
+        score += 3
+        notes.append("EPS為正")
+    if earnings_growth >= 25:
+        score += 4
+        notes.append("EPS成長強")
+    elif earnings_growth >= 10:
+        score += 2
+
+    if gross >= 35:
+        score += 3
+        notes.append("毛利率高")
+    elif gross >= 20:
+        score += 2
+
+    if opm >= 15:
+        score += 3
+        notes.append("營益率佳")
+    elif opm >= 8:
+        score += 2
+
+    if npm >= 10:
+        score += 1
+    if roe >= 15:
+        score += 2
+        notes.append("ROE佳")
+    elif roe >= 10:
+        score += 1
+
+    return max(0, min(15, round2(score))), notes
+
+
+def score_undervaluation(info, price, industry=""):
+    score = 0
+    notes = []
+
+    pe = safe_float(info.get("trailingPE", 0)) or safe_float(info.get("forwardPE", 0))
+    pb = safe_float(info.get("priceToBook", 0))
+    eps = safe_float(info.get("trailingEps", 0))
+    earnings_growth = safe_float(info.get("earningsGrowth", 0)) * 100
+    fair_pe = estimate_fair_pe(info, industry)
+
+    if eps <= 0 or price <= 0:
+        return 0, "估值資料不足", 0, 0, 0, ["EPS或股價資料不足"]
+
+    fair_value = round2(eps * fair_pe)
+    upside = round2(pct(fair_value, price))
+
+    if pe:
+        if pe <= fair_pe * 0.55:
+            score += 8
+            notes.append("本益比明顯低於合理區")
+        elif pe <= fair_pe * 0.75:
+            score += 6
+            notes.append("本益比偏低")
+        elif pe <= fair_pe:
+            score += 4
+            notes.append("估值合理偏低")
+        elif pe > fair_pe * 1.5:
+            score -= 5
+            notes.append("本益比偏高")
+
+    if pb and pb <= 1.5:
+        score += 3
+        notes.append("股價淨值比偏低")
+    elif pb and pb > 5:
+        score -= 2
+        notes.append("股價淨值比偏高")
+
+    if upside >= 150:
+        score += 7
+        notes.append("潛在空間很大")
+    elif upside >= 100:
+        score += 5
+        notes.append("潛在空間達翻倍")
+    elif upside >= 50:
+        score += 3
+    else:
+        score -= 3
+        notes.append("潛在空間不足")
+
+    if pe and earnings_growth > 0:
+        peg = pe / earnings_growth
+        if peg < 1:
+            score += 2
+            notes.append("PEG合理")
+        elif peg > 2:
+            score -= 2
+            notes.append("PEG偏高")
+
+    return max(0, min(20, round2(score))), undervalue_bucket(pe, fair_pe), fair_pe, fair_value, upside, notes
+
+
+def score_catalyst(info):
+    score = 0
+    notes = []
+
+    revenue_growth = safe_float(info.get("revenueGrowth", 0)) * 100
+    earnings_growth = safe_float(info.get("earningsGrowth", 0)) * 100
+    gross = safe_float(info.get("grossMargins", 0)) * 100
+    opm = safe_float(info.get("operatingMargins", 0)) * 100
+
+    if revenue_growth >= 30:
+        score += 6
+        notes.append("營收成長強")
+    elif revenue_growth >= 15:
+        score += 4
+        notes.append("營收成長")
+    elif revenue_growth > 0:
+        score += 2
+    else:
+        score -= 3
+        notes.append("營收未成長")
+
+    if earnings_growth >= 50:
+        score += 7
+        notes.append("EPS成長強")
+    elif earnings_growth >= 20:
+        score += 5
+        notes.append("EPS成長")
+    elif earnings_growth > 0:
+        score += 2
+
+    if gross >= 30 and opm >= 10:
+        score += 3
+        notes.append("獲利結構支持重估")
+
+    # yfinance不一定有月營收/法說資訊，這裡先用財報成長代理催化劑
+    if revenue_growth > 10 and earnings_growth > 10:
+        score += 4
+        notes.append("營收與獲利同步轉強")
+
+    return max(0, min(20, round2(score))), notes
+
+
+def score_industry_trend(industry, sector):
+    text = f"{industry} {sector}"
+    hot = {
+        "半導體": 10, "Semiconductor": 10,
+        "AI": 10, "伺服": 9, "Server": 9,
+        "散熱": 8, "電源": 8, "高速": 8,
+        "電子": 7, "Technology": 7,
+        "通訊": 7, "車用": 7,
+        "航太": 7, "材料": 6,
+        "醫療": 6, "Healthcare": 6,
     }
+    best = 4
+    for k, s in hot.items():
+        if k in text:
+            best = max(best, s)
+    return min(10, best)
 
 
-def previous_period_high(df, days):
-    if df is None or len(df) < days + 2:
-        return None
-    return safe_float(df["High"].iloc[-days-1:-1].max())
+def score_moat(info, industry=""):
+    score = 0
+    notes = []
+
+    gross = safe_float(info.get("grossMargins", 0)) * 100
+    opm = safe_float(info.get("operatingMargins", 0)) * 100
+    market_cap = safe_float(info.get("marketCap", 0))
+    roe = safe_float(info.get("returnOnEquity", 0)) * 100
+
+    if gross >= 40:
+        score += 3
+        notes.append("高毛利，可能具備定價權")
+    elif gross >= 25:
+        score += 2
+
+    if opm >= 15:
+        score += 2
+        notes.append("營益率佳")
+    if roe >= 15:
+        score += 2
+        notes.append("資本效率佳")
+
+    if market_cap >= 50_000_000_000:
+        score += 2
+        notes.append("具一定市場地位")
+    elif market_cap >= 10_000_000_000:
+        score += 1
+
+    # 文字無法精準判斷護城河，保守評分
+    if any(k in str(industry) for k in ["半導體", "材料", "醫療", "特殊", "伺服"]):
+        score += 1
+
+    return max(0, min(10, round2(score))), notes
 
 
-def breakout_volume_bucket(volume_ratio):
-    r = safe_float(volume_ratio, 0)
-    if r <= 0:
-        return "量能資料不足"
-    if r < 1.2:
-        return "量能不足"
-    if r < 3:
-        return "正常放量"
-    if r < 5:
-        return "爆量偏熱"
-    return "過度爆量"
-
-
-def next_pressure_bucket(distance_pct, no_pressure=False):
-    if no_pressure:
-        return "前方無明顯壓力"
-    d = safe_float(distance_pct, 0)
-    if d < 3:
-        return "壓力太近(<3%)"
-    if d < 8:
-        return "空間普通(3~8%)"
-    if d < 15:
-        return "空間良好(8~15%)"
-    return "空間大(>15%)"
-
-
-def calc_rsi_series(close, period=14):
+def score_funding(info, df):
+    # 不再做技術分析，只用成交值/市值流動性當資料可信度與資金認同輔助
+    score = 2
+    notes = ["資金面僅輔助，不作為主策略"]
     try:
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(period).mean()
-        avg_loss = loss.rolling(period).mean()
-        rs = avg_gain / avg_loss.replace(0, 0.000001)
-        return 100 - (100 / (1 + rs))
+        if df is not None and len(df) >= 20:
+            avg_amt = safe_float((df["Close"] * df["Volume"]).rolling(20).mean().iloc[-1])
+            if avg_amt >= 100_000_000:
+                score += 3
+                notes.append("成交金額足夠")
+            elif avg_amt >= 30_000_000:
+                score += 2
+            elif avg_amt < 5_000_000:
+                score -= 2
+                notes.append("流動性不足")
     except Exception:
-        return pd.Series([], dtype=float)
+        pass
+    return max(0, min(5, round2(score))), notes
 
 
-def breakout_auxiliary_filter(df):
+def score_governance(info):
+    # yfinance沒有台灣公司治理評鑑，先用保守中性分數；重大風險需後續接公開資訊觀測站
+    return 3, ["公司治理資料需後續接公開資訊觀測站"]
+
+
+def value_risk_deductions(info):
+    deduct = 0
+    notes = []
+
+    pe = safe_float(info.get("trailingPE", 0)) or safe_float(info.get("forwardPE", 0))
+    eps = safe_float(info.get("trailingEps", 0))
+    revenue_growth = safe_float(info.get("revenueGrowth", 0)) * 100
+    earnings_growth = safe_float(info.get("earningsGrowth", 0)) * 100
+    gross = safe_float(info.get("grossMargins", 0)) * 100
+    op_cash = safe_float(info.get("operatingCashflow", 0))
+
+    if eps <= 0:
+        deduct += 15
+        notes.append("EPS非正數")
+    if revenue_growth < -10:
+        deduct += 8
+        notes.append("營收明顯衰退")
+    if earnings_growth < -10:
+        deduct += 8
+        notes.append("EPS成長轉弱")
+    if gross and gross < 10:
+        deduct += 5
+        notes.append("毛利率偏低")
+    if pe and pe > 60 and earnings_growth < 30:
+        deduct += 10
+        notes.append("估值高但成長不足")
+    if op_cash and op_cash < 0:
+        deduct += 8
+        notes.append("營業現金流為負")
+
+    return min(30, deduct), notes
+
+
+def analyze_value_stock(symbol, name="-", industry="-", df=None):
     """
-    輔助判斷：K棒、均線、黃金交叉、背離、成交量。
-    這些不是主策略，只用來加減分與避免明顯爛訊號。
-    主軸仍是：突破前高、到前高位置橫向盤整、突破前高後回採前高進場跌破出場。
+    價值分析模型：
+    不使用K棒/突破/均線做買賣核心。
+    用低估、財務安全、獲利品質、重估催化劑、產業趨勢、護城河判斷。
     """
-    out = {
-        "aux_score": 0,
-        "aux_notes": [],
-        "k_pattern": "-",
-        "ma_status": "-",
-        "golden_cross": "否",
-        "divergence_signal": "無明顯背離",
-        "volume_check": "-",
-        "aux_pass": True,
-    }
+    info = yf_info(symbol)
+    if not info:
+        return None
+
+    if df is None:
+        df = download_stock(symbol, "1y")
+
+    price = 0
     try:
-        if df is None or len(df) < 80:
-            out["aux_notes"].append("輔助資料不足")
-            return out
-        c, h, l, o, v = df["Close"], df["High"], df["Low"], df["Open"], df["Volume"]
-        price = safe_float(c.iloc[-1]); op = safe_float(o.iloc[-1]); hi = safe_float(h.iloc[-1]); lo = safe_float(l.iloc[-1])
-        vol = safe_float(v.iloc[-1]); avg_vol20 = safe_float(v.rolling(20).mean().iloc[-1])
-        ma20s = c.rolling(20).mean(); ma60s = c.rolling(60).mean(); ma120s = c.rolling(120).mean()
-        ma20 = safe_float(ma20s.iloc[-1]); ma60 = safe_float(ma60s.iloc[-1]); ma120 = safe_float(ma120s.iloc[-1]) if len(c) >= 120 else 0
-        if price and ma20 and ma60 and price > ma20 > ma60:
-            out["aux_score"] += 12; out["ma_status"] = "站上20日且20日大於60日"; out["aux_notes"].append("均線偏多")
-        elif price and ma60 and price > ma60:
-            out["aux_score"] += 5; out["ma_status"] = "站上60日"
-        else:
-            out["aux_score"] -= 12; out["ma_status"] = "均線偏弱"; out["aux_notes"].append("均線偏弱")
-        if ma20 and ma60 and ma120 and ma20 > ma60 > ma120:
-            out["aux_score"] += 8; out["aux_notes"].append("多頭排列")
-        if len(ma20s.dropna()) >= 8 and len(ma60s.dropna()) >= 8:
-            if safe_float(ma20s.iloc[-1]) > safe_float(ma60s.iloc[-1]) and safe_float(ma20s.iloc[-6]) <= safe_float(ma60s.iloc[-6]):
-                out["aux_score"] += 10; out["golden_cross"] = "20日線黃金交叉60日線"; out["aux_notes"].append("黃金交叉")
-        full = max(hi - lo, 0.000001); upper_shadow = hi - max(price, op)
-        if price > op and upper_shadow / full <= 0.35:
-            out["aux_score"] += 8; out["k_pattern"] = "紅K突破"; out["aux_notes"].append("紅K突破")
-        elif upper_shadow / full > 0.45:
-            out["aux_score"] -= 15; out["k_pattern"] = "長上影突破，疑似遇壓"; out["aux_notes"].append("長上影")
-        elif price < op:
-            out["aux_score"] -= 8; out["k_pattern"] = "黑K突破，需保守"; out["aux_notes"].append("黑K突破")
-        else:
-            out["k_pattern"] = "K棒普通"
-        vol_ratio = vol / avg_vol20 if avg_vol20 else 0
-        if 1.2 <= vol_ratio < 3:
-            out["aux_score"] += 12; out["volume_check"] = "正常放量"
-        elif 3 <= vol_ratio < 5:
-            out["aux_score"] += 3; out["volume_check"] = "爆量偏熱"; out["aux_notes"].append("爆量偏熱")
-        elif vol_ratio >= 5:
-            out["aux_score"] -= 12; out["volume_check"] = "過度爆量"; out["aux_notes"].append("過度爆量")
-        else:
-            out["aux_score"] -= 10; out["volume_check"] = "量能不足"; out["aux_notes"].append("量能不足")
-        rsi = calc_rsi_series(c, 14)
-        if len(rsi.dropna()) >= 25:
-            recent_price_high = safe_float(h.iloc[-1]); prev_price_high = safe_float(h.iloc[-21:-1].max())
-            recent_rsi = safe_float(rsi.iloc[-1]); prev_rsi_high = safe_float(rsi.iloc[-21:-1].max())
-            if recent_price_high > prev_price_high and recent_rsi < prev_rsi_high - 5:
-                out["aux_score"] -= 12; out["divergence_signal"] = "疑似RSI背離"; out["aux_notes"].append("疑似背離")
-        if out["aux_score"] <= -25:
-            out["aux_pass"] = False
-        out["aux_score"] = round2(out["aux_score"]); out["aux_notes"] = out["aux_notes"][:8]
-        return out
-    except Exception as e:
-        print("breakout_auxiliary_filter failed", e)
-        out["aux_notes"].append("輔助判斷失敗")
-        return out
+        price = safe_float(info.get("currentPrice", 0)) or safe_float(info.get("regularMarketPrice", 0))
+        if not price and df is not None and not df.empty:
+            price = safe_float(df["Close"].iloc[-1])
+    except Exception:
+        price = 0
 
+    if not price:
+        return None
 
-def analyze_breakout_stock(df):
-    """
-    以最新一日「收盤價」突破前N日內高點判斷；前高計算排除最新一日。
-    """
-    if df is None or len(df) < 45:
-        return None
-    c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
-    price = safe_float(c.iloc[-1]); last_high = safe_float(h.iloc[-1]); last_low = safe_float(l.iloc[-1])
-    last_open = safe_float(df["Open"].iloc[-1]); last_vol = safe_float(v.iloc[-1]); prev_close = safe_float(c.iloc[-2]) if len(c) >= 2 else 0
-    if not price or not last_vol:
-        return None
-    avg_vol20 = safe_float(v.rolling(20).mean().iloc[-1]) if len(v) >= 20 else 0
-    avg_amt20 = safe_float((c * v).rolling(20).mean().iloc[-1]) if len(c) >= 20 else 0
-    volume_ratio = round2(last_vol / avg_vol20) if avg_vol20 else 0
-    volume_bucket = breakout_volume_bucket(volume_ratio)
-    if avg_vol20 < BREAKOUT_MIN_AVG_VOLUME and avg_amt20 < BREAKOUT_MIN_AVG_AMOUNT:
-        return None
-    highs = []
-    for label, days in BREAKOUT_PERIODS:
-        ph = previous_period_high(df, days)
-        if ph:
-            highs.append({"level": label, "days": days, "price": round2(ph), "broken": price > ph})
-    all_time_high = None
-    if len(df) >= 252:
-        all_time_high = safe_float(h.iloc[:-1].max())
-        if all_time_high:
-            highs.append({"level": "全部歷史", "days": len(df), "price": round2(all_time_high), "broken": price > all_time_high})
-    broken = [x for x in highs if x.get("broken")]
-    if not broken:
-        return None
-    highest = broken[-1]
-    unbroken = [x for x in highs if not x.get("broken") and x.get("price", 0) > price]
-    next_pressure = unbroken[0] if unbroken else None
-    no_pressure = next_pressure is None
-    breakout_price = safe_float(highest["price"])
-    distance_from_breakout = round2(pct(price, breakout_price))
-    next_pressure_price = round2(next_pressure["price"]) if next_pressure else "-"
-    next_pressure_level = next_pressure["level"] if next_pressure else "前方無明顯壓力"
-    next_pressure_distance = round2(pct(next_pressure["price"], price)) if next_pressure else 999
-    pressure_count_above = len(unbroken)
-    entry_low = round2(breakout_price)
-    entry_high = round2(breakout_price * (1 + BREAKOUT_ENTRY_UPPER_PCT))
-    no_entry = round2(breakout_price * (1 - BREAKOUT_NO_ENTRY_PCT))
-    stop = round2(min(breakout_price * (1 - BREAKOUT_STOP_PCT), last_low))
-    target = round2(next_pressure["price"]) if next_pressure else round2(price * 1.12)
-    highest_days = safe_int(highest.get("days", 0))
-    aux = breakout_auxiliary_filter(df)
-    if price < no_entry:
-        current_status = "跌破失敗"; execution_action = "不進場"
-    elif highest_days < BREAKOUT_MIN_ENTRY_DAYS:
-        current_status = "突破訊號"; execution_action = "1月/2月/3月突破只記錄，不提醒進場"
-    elif (not no_pressure) and next_pressure_distance < BREAKOUT_MIN_PRESSURE_DISTANCE_PCT:
-        current_status = "突破訊號"; execution_action = "下一壓力小於3%，只記錄不提醒"
-    elif volume_ratio < BREAKOUT_MIN_VOLUME_RATIO:
-        current_status = "突破訊號"; execution_action = "量能不足，只記錄不提醒"
-    elif not aux.get("aux_pass", True):
-        current_status = "突破訊號"; execution_action = "輔助條件偏弱，只記錄不提醒"
-    elif price > breakout_price * (1 + BREAKOUT_GAP_WATCH_PCT / 100):
-        current_status = "等回測"; execution_action = "超過突破價3%，開高不追"
-    elif entry_low <= price <= entry_high:
-        current_status = "可進場訊號"; execution_action = "可小部位試單"
+    info_industry = info.get("industry") or industry or "-"
+    info_sector = info.get("sector") or "-"
+
+    financial_safety_score, safety_notes = score_financial_safety(info)
+    profit_quality_score, profit_notes = score_profit_quality(info)
+    undervalue_score, undervalue_status, fair_pe, fair_value, upside_pct, undervalue_notes = score_undervaluation(info, price, info_industry)
+    catalyst_score, catalyst_notes = score_catalyst(info)
+    industry_score = score_industry_trend(info_industry, info_sector)
+    moat_score, moat_notes = score_moat(info, info_industry)
+    funding_score, funding_notes = score_funding(info, df)
+    governance_score, governance_notes = score_governance(info)
+    risk_deduct, risk_notes = value_risk_deductions(info)
+
+    total = round2(
+        financial_safety_score
+        + profit_quality_score
+        + undervalue_score
+        + catalyst_score
+        + industry_score
+        + moat_score
+        + funding_score
+        + governance_score
+        - risk_deduct
+    )
+
+    eps = safe_float(info.get("trailingEps", 0))
+    pe = safe_float(info.get("trailingPE", 0)) or safe_float(info.get("forwardPE", 0))
+    pb = safe_float(info.get("priceToBook", 0))
+    revenue_growth = round2(safe_float(info.get("revenueGrowth", 0)) * 100)
+    earnings_growth = round2(safe_float(info.get("earningsGrowth", 0)) * 100)
+    gross_margin = round2(safe_float(info.get("grossMargins", 0)) * 100)
+    operating_margin = round2(safe_float(info.get("operatingMargins", 0)) * 100)
+    roe = round2(safe_float(info.get("returnOnEquity", 0)) * 100)
+    market_cap = safe_float(info.get("marketCap", 0))
+
+    hard_exclude = False
+    exclude_reasons = []
+
+    if eps <= 0:
+        hard_exclude = True
+        exclude_reasons.append("EPS非正數")
+    if financial_safety_score < 5:
+        hard_exclude = True
+        exclude_reasons.append("財務安全分數過低")
+    if profit_quality_score < 5:
+        hard_exclude = True
+        exclude_reasons.append("獲利品質分數過低")
+    if risk_deduct >= 20:
+        hard_exclude = True
+        exclude_reasons.append("風險扣分過高")
+
+    if hard_exclude:
+        action = "排除"
+        level = "D"
+    elif (
+        total >= VALUE_SCORE_BUY
+        and financial_safety_score >= 10
+        and profit_quality_score >= 10
+        and undervalue_score >= VALUE_MIN_UNDERVALUE_SCORE
+        and catalyst_score >= VALUE_MIN_CATALYST_SCORE
+        and upside_pct >= VALUE_MIN_UPSIDE_PCT
+        and price < fair_value
+    ):
+        action = "買進提醒"
+        level = "S"
+    elif total >= VALUE_SCORE_WATCH:
+        action = "只觀察"
+        level = "A"
+    elif total >= 65:
+        action = "只觀察"
+        level = "B"
     else:
-        current_status = "等回測"; execution_action = "等待回採突破價"
-    if highest["level"] == "全部歷史":
-        level_score = 120
-    else:
-        level_score = {"1月": 10, "2月": 20, "3月": 30, "6月": 55, "1年": 70, "3年": 90, "5年": 105}.get(highest["level"], 0)
-    pressure_score = 30 if no_pressure else 18 if next_pressure_distance >= 8 else 8 if next_pressure_distance >= 3 else -18
-    volume_score = 20 if 1.2 <= volume_ratio < 3 else 8 if 3 <= volume_ratio < 5 else -15 if volume_ratio >= 5 else -18
-    heat_penalty = -18 if distance_from_breakout > 8 else -10 if distance_from_breakout > 5 else 0
-    score = round2(level_score + pressure_score + volume_score + heat_penalty + safe_float(aux.get("aux_score", 0)))
-    level = "S" if score >= 115 else "A" if score >= 75 else "B"
-    rr = round2(max(target - entry_low, 0.01) / max(entry_low - stop, 0.01))
+        action = "排除"
+        level = "C"
+
+    notes = []
+    notes.extend(safety_notes[:3])
+    notes.extend(profit_notes[:3])
+    notes.extend(undervalue_notes[:3])
+    notes.extend(catalyst_notes[:3])
+    notes.extend(moat_notes[:2])
+    notes.extend(risk_notes[:4])
+
     return {
-        "price": round2(price), "day_close": round2(price), "day_high": round2(last_high), "day_low": round2(last_low),
-        "open_price": round2(last_open), "prev_close": round2(prev_close), "technical_score": score, "score": score, "level": level,
-        "breakout_strategy_version": BREAKOUT_STRATEGY_VERSION, "breakout_levels": "、".join([x["level"] for x in broken]),
-        "highest_breakout_level": highest["level"], "highest_breakout_days": highest_days, "breakout_price": round2(breakout_price),
-        "support_price": round2(breakout_price), "distance_from_breakout_pct": distance_from_breakout,
-        "next_pressure_level": next_pressure_level, "next_pressure_price": next_pressure_price,
-        "next_pressure_distance_pct": "-" if no_pressure else next_pressure_distance, "next_pressure_bucket": next_pressure_bucket(next_pressure_distance, no_pressure),
-        "pressure_count_above": pressure_count_above, "no_overhead_pressure": no_pressure, "all_time_high_price": round2(all_time_high) if all_time_high else "-",
-        "is_all_time_high_breakout": bool(highest["level"] == "全部歷史"), "volume_ratio": volume_ratio, "volume_bucket": volume_bucket,
-        "avg_volume_20": round2(avg_vol20), "avg_amount_20": round2(avg_amt20), "next_entry_low": entry_low, "next_entry_high": entry_high,
-        "no_entry_price": no_entry, "invalid_price": no_entry, "practical_stop": stop, "initial_stop": stop, "target_price": target,
-        "risk_reward": rr, "risk_reward_note": "突破價～突破價+2%進場，跌破突破價-1%不進", "risk_reward_group": risk_reward_group(rr),
-        "buy_type": f"收盤突破{highest['level']}高點", "entry_status": current_status, "current_status": current_status, "execution_action": execution_action,
-        "execution_score": score, "execution_note": f"收盤突破{highest['level']}高點；下一壓力：{next_pressure_level} {next_pressure_price}；量能：{volume_bucket} {volume_ratio}倍；輔助：{aux.get('aux_score')}",
-        "entry_reason": f"收盤價突破前{highest['level']}高點", "trade_plan_note": "主軸：突破前高、前高盤整、突破回採前高。隔天若回到突破價～突破價+2%才提醒試單；超過突破價+3%不追。",
-        "ai_next_action": execution_action, "signals": [f"收盤突破{highest['level']}高點"], "warnings": [] if volume_ratio >= BREAKOUT_MIN_VOLUME_RATIO else ["量能不足"],
-        "aux_score": aux.get("aux_score", 0), "aux_notes": aux.get("aux_notes", []), "k_pattern": aux.get("k_pattern", "-"), "ma_status": aux.get("ma_status", "-"),
-        "golden_cross": aux.get("golden_cross", "否"), "divergence_signal": aux.get("divergence_signal", "無明顯背離"), "volume_check": aux.get("volume_check", "-"),
-        "weekly_trend": "-", "daily_signal": "突破前高", "sector_relative_rank": "-", "sector_relative_total": "-", "sector_relative_status": "-",
-        "main_score": 0, "combined_sector_score": 0, "leader_score": 0, "sector_status": "-", "leader_status": "-", "leader_names": "-",
-        "candle_signal": aux.get("k_pattern", "-"), "candle_score": aux.get("aux_score", 0), "market_status": "-",
+        "symbol": symbol,
+        "name": name,
+        "industry": info_industry,
+        "sector": info_sector,
+        "price": round2(price),
+        "day_close": round2(price),
+        "level": level,
+        "action": action,
+        "current_status": action,
+        "execution_action": action,
+        "buy_type": "價值分析",
+        "value_model_version": VALUE_MODEL_VERSION,
+        "score": total,
+        "financial_safety_score": financial_safety_score,
+        "profit_quality_score": profit_quality_score,
+        "undervalue_score": undervalue_score,
+        "catalyst_score": catalyst_score,
+        "industry_score": industry_score,
+        "moat_score": moat_score,
+        "funding_score": funding_score,
+        "governance_score": governance_score,
+        "risk_deduct": risk_deduct,
+        "eps": round2(eps),
+        "pe": round2(pe),
+        "pb": round2(pb),
+        "fair_pe": round2(fair_pe),
+        "fair_value": round2(fair_value),
+        "fair_value_low": round2(fair_value * 0.8),
+        "fair_value_high": round2(fair_value * 1.25),
+        "upside_pct": round2(upside_pct),
+        "upside_bucket": value_bucket_upside(upside_pct),
+        "undervalue_status": undervalue_status,
+        "undervalue_bucket": undervalue_status,
+        "revenue_growth_pct": revenue_growth,
+        "earnings_growth_pct": earnings_growth,
+        "gross_margin_pct": gross_margin,
+        "operating_margin_pct": operating_margin,
+        "roe_pct": roe,
+        "market_cap": round2(market_cap),
+        "risk_notes": risk_notes,
+        "value_notes": notes,
+        "exclude_reasons": exclude_reasons,
+        "target_price": round2(fair_value),
+        "next_entry_low": round2(price),
+        "next_entry_high": round2(min(price * 1.03, fair_value)),
+        "no_entry_price": round2(price * 0.85),
+        "practical_stop": 0,
+        "risk_reward": 0,
+        "risk_reward_note": "價值分析版不以技術停損為主，依基本面轉弱或估值過高出場",
+        "trade_plan_note": "可分批買進；買進後監控基本面、估值與買進理由是否破壞。",
+        "ai_next_action": action,
     }
 
-def record_breakout_signal(item, signal_type="突破訊號", note=""):
-    price = safe_float(item.get("day_close", 0)) or safe_float(item.get("price", 0))
+
+def value_sell_check_for_holding(track):
+    """
+    持有監控：
+    買進後只檢查基本面轉弱、估值過高、原始邏輯破壞。
+    """
+    symbol = track.get("symbol")
+    name = track.get("name", symbol)
+    item = analyze_value_stock(symbol, name=name, industry=track.get("industry", "-"))
+    if not item:
+        return {"alert": False, "type": "持續持有", "reason": "基本面資料不足，暫不動作", "item": track}
+
+    reasons = []
+    alert_type = "持續持有"
+
+    if item.get("risk_deduct", 0) >= 20 or item.get("financial_safety_score", 0) < 5 or item.get("profit_quality_score", 0) < 5:
+        alert_type = "賣出提醒"
+        reasons.append("基本面轉弱或風險扣分過高")
+
+    if item.get("upside_pct", 0) < 20 and item.get("price", 0) >= item.get("fair_value", 0):
+        alert_type = "停利提醒"
+        reasons.append("估值偏高，潛在空間不足")
+
+    if item.get("catalyst_score", 0) < 6 and item.get("undervalue_score", 0) < 8:
+        alert_type = "賣出提醒"
+        reasons.append("原始低估重估邏輯轉弱")
+
+    if not reasons:
+        reasons.append("基本面與估值尚未觸發出場條件")
+
+    return {
+        "alert": alert_type in ["賣出提醒", "停利提醒"],
+        "type": alert_type,
+        "reason": "；".join(reasons),
+        "item": item,
+    }
+
+
+def record_value_signal(signal_type, item, note=""):
+    price = safe_float(item.get("price", 0)) or safe_float(item.get("day_close", 0))
     if not price:
         return
 
@@ -3231,42 +3408,45 @@ def record_breakout_signal(item, signal_type="突破訊號", note=""):
         item.get("level", "-"),
         signal_type,
         price,
-        note or item.get("execution_note", ""),
+        note or "價值分析訊號",
         extra={
-            "strategy_version": BREAKOUT_STRATEGY_VERSION,
-            "breakout_strategy_version": BREAKOUT_STRATEGY_VERSION,
-            "breakout_levels": item.get("breakout_levels", "-"),
-            "highest_breakout_level": item.get("highest_breakout_level", "-"),
-            "breakout_price": item.get("breakout_price", "-"),
-            "distance_from_breakout_pct": item.get("distance_from_breakout_pct", "-"),
-            "next_pressure_level": item.get("next_pressure_level", "-"),
-            "next_pressure_price": item.get("next_pressure_price", "-"),
-            "next_pressure_distance_pct": item.get("next_pressure_distance_pct", "-"),
-            "next_pressure_bucket": item.get("next_pressure_bucket", "-"),
-            "pressure_count_above": item.get("pressure_count_above", "-"),
-            "volume_ratio": item.get("volume_ratio", "-"),
-            "volume_bucket": item.get("volume_bucket", "-"),
-            "is_all_time_high_breakout": item.get("is_all_time_high_breakout", False),
-            "all_time_high_price": item.get("all_time_high_price", "-"),
-            "k_pattern": item.get("k_pattern", "-"),
-            "ma_status": item.get("ma_status", "-"),
-            "golden_cross": item.get("golden_cross", "-"),
-            "divergence_signal": item.get("divergence_signal", "-"),
-            "aux_score": item.get("aux_score", "-"),
-            "aux_notes": item.get("aux_notes", []),
-            "current_status": item.get("current_status", "-"),
-            "execution_action": item.get("execution_action", "-"),
+            "strategy_version": VALUE_MODEL_VERSION,
+            "value_model_version": VALUE_MODEL_VERSION,
+            "financial_safety_score": item.get("financial_safety_score", 0),
+            "profit_quality_score": item.get("profit_quality_score", 0),
+            "undervalue_score": item.get("undervalue_score", 0),
+            "catalyst_score": item.get("catalyst_score", 0),
+            "industry_score": item.get("industry_score", 0),
+            "moat_score": item.get("moat_score", 0),
+            "risk_deduct": item.get("risk_deduct", 0),
+            "eps": item.get("eps", "-"),
+            "pe": item.get("pe", "-"),
+            "fair_value": item.get("fair_value", "-"),
+            "upside_pct": item.get("upside_pct", "-"),
+            "upside_bucket": item.get("upside_bucket", "-"),
+            "undervalue_bucket": item.get("undervalue_bucket", "-"),
+            "industry": item.get("industry", "-"),
+            "revenue_growth_pct": item.get("revenue_growth_pct", "-"),
+            "earnings_growth_pct": item.get("earnings_growth_pct", "-"),
+            "gross_margin_pct": item.get("gross_margin_pct", "-"),
+            "operating_margin_pct": item.get("operating_margin_pct", "-"),
+            "roe_pct": item.get("roe_pct", "-"),
+            "risk_notes": item.get("risk_notes", []),
+            "value_notes": item.get("value_notes", []),
         },
     )
 
 
-def update_breakout_candidate_pool(items):
+def update_value_candidate_pool(items):
     now = taiwan_now()
     today = today_str()
     old = read_json(CANDIDATE_FILE, {"candidates": {}}).get("candidates", {})
     new = {}
+
     for item in items:
         sym = item.get("symbol")
+        if not sym:
+            continue
         prev = old.get(sym, {})
         item["first_seen"] = prev.get("first_seen", today)
         item["last_seen"] = today
@@ -3277,110 +3457,109 @@ def update_breakout_candidate_pool(items):
     new = dict(sorted(
         new.items(),
         key=lambda kv: (
-            kv[1].get("current_status") == "可進場訊號",
-            kv[1].get("highest_breakout_days", 0),
-            kv[1].get("next_pressure_distance_pct", 0) if kv[1].get("next_pressure_distance_pct") != "-" else 999,
+            kv[1].get("current_status") == "買進提醒",
             kv[1].get("score", 0),
+            kv[1].get("upside_pct", 0),
+            kv[1].get("undervalue_score", 0),
         ),
         reverse=True,
     ))
 
-    alerts = [x for x in new.values() if x.get("current_status") == "可進場訊號"][:MAX_ENTRY_ALERTS]
+    alerts = [x for x in new.values() if x.get("current_status") == "買進提醒"][:VALUE_MAX_ALERTS]
     data = {"updated_at": now, "candidates": new, "entry_alerts": alerts}
     write_json(CANDIDATE_FILE, data)
     return data
 
 
 def scan_market():
-    save_scan_status("running", "突破前高策略：正在建立全市場股票池。")
+    save_scan_status("running", "價值分析：正在建立全市場股票池。")
 
     stocks = get_stock_pool()
     market = market_status()
-    breakout_market = breakout_market_filter()
     total = len(stocks)
 
-    save_scan_status("running", f"股票池建立完成：{total} 檔。開始盤後突破前高掃描。")
+    save_scan_status("running", f"股票池建立完成：{total} 檔。開始低估重估潛力股掃描。")
 
-    final = []
-    rough_count = 0
-
+    rough = []
+    # 粗篩：先用近一年流動性與價格資料排除明顯不適合者，避免每檔都抓基本面造成卡住。
     for i, (sym, info) in enumerate(stocks.items(), 1):
         try:
             name = info.get("name", sym)
             industry = info.get("industry", "其他")
-            sector = infer_sector(sym, name, industry)
-
-            # 第一段先抓1年，找1月~1年突破，避免全市場直接抓5年造成Railway卡住。
             df = download_stock(sym, "1y")
-            res = analyze_breakout_stock(df)
-
-            if not res:
-                if i % 100 == 0:
-                    save_scan_status("running", f"突破掃描中：{i}/{total}，目前突破候選 {len(final)} 檔。")
-                time.sleep(ROUGH_ANALYSIS_SLEEP)
+            if df is None or len(df) < 60:
                 continue
 
-            rough_count += 1
+            price = safe_float(df["Close"].iloc[-1])
+            avg_amt = safe_float((df["Close"] * df["Volume"]).rolling(20).mean().iloc[-1])
+            ch120 = pct(df["Close"].iloc[-1], df["Close"].iloc[-120]) if len(df) >= 120 else 0
 
-            # 有突破候選才補抓全部歷史，用來判斷「全部歷史高點 / 歷史新高」與長期壓力。
-            try:
-                df_hist = download_stock(sym, BREAKOUT_HISTORY_PERIOD)
-                res_hist = analyze_breakout_stock(df_hist)
-                if res_hist:
-                    res = res_hist
-            except Exception as e:
-                print("history breakout refine failed", sym, e)
+            # 價值分析不是技術分析，這裡只用來排除太冷門、資料不足、流動性過差的股票。
+            if avg_amt < 3_000_000:
+                continue
 
-            item = {
+            rough_score = 0
+            if avg_amt >= 30_000_000:
+                rough_score += 10
+            if price >= 10:
+                rough_score += 5
+            if ch120 > -40:
+                rough_score += 5
+
+            rough.append({
                 "symbol": sym,
                 "name": name,
                 "industry": industry,
-                "sector": sector,
-            }
-            item.update(res)
-
-            item["market_status"] = breakout_market.get("breakout_market_status", "-")
-            item["breakout_market_status"] = breakout_market.get("breakout_market_status", "-")
-            item["breakout_market_mode"] = breakout_market.get("breakout_market_mode", "-")
-
-            # 大盤濾網
-            if not breakout_market.get("breakout_allow_entry"):
-                item["current_status"] = "突破訊號"
-                item["entry_status"] = "突破訊號"
-                item["execution_action"] = "大盤空頭，只記錄不進場"
-            elif breakout_market.get("breakout_market_status") == "盤整" and safe_int(item.get("highest_breakout_days", 0)) < BREAKOUT_MIN_ENTRY_DAYS:
-                item["current_status"] = "突破訊號"
-                item["entry_status"] = "突破訊號"
-                item["execution_action"] = "大盤盤整，未達6月以上突破只觀察"
-            elif item.get("current_status") == "可進場訊號" and safe_float(item.get("volume_ratio", 0)) < BREAKOUT_MIN_VOLUME_RATIO:
-                item["current_status"] = "突破訊號"
-                item["entry_status"] = "突破訊號"
-                item["execution_action"] = "量能不足，只記錄不進場"
-
-            record_breakout_signal(item, "突破訊號")
-            final.append(item)
+                "rough_score": rough_score,
+                "avg_amount_20": round2(avg_amt),
+            })
 
             if i % 100 == 0:
-                save_scan_status("running", f"突破掃描中：{i}/{total}，目前突破候選 {len(final)} 檔。")
+                save_scan_status("running", f"價值分析粗篩中：{i}/{total}，通過 {len(rough)} 檔。")
 
             time.sleep(ROUGH_ANALYSIS_SLEEP)
 
         except Exception as e:
-            print("breakout scan failed", sym, e)
+            print("value rough scan failed", sym, e)
+
+    rough = sorted(rough, key=lambda x: (x.get("rough_score", 0), x.get("avg_amount_20", 0)), reverse=True)
+    targets = rough[:VALUE_SCAN_LIMIT]
+
+    save_scan_status("running", f"粗篩完成：通過 {len(rough)} 檔，進入基本面深入分析 {len(targets)} 檔。")
+
+    final = []
+    for i, info in enumerate(targets, 1):
+        sym = info.get("symbol")
+        try:
+            item = analyze_value_stock(sym, name=info.get("name", sym), industry=info.get("industry", "-"))
+            if not item:
+                continue
+
+            if item.get("current_status") in ["買進提醒", "只觀察"]:
+                final.append(item)
+                if item.get("current_status") == "買進提醒":
+                    record_value_signal("買進提醒", item, "低估轉強，具備重估空間。")
+
+            if i % 25 == 0:
+                save_scan_status("running", f"基本面分析中：{i}/{len(targets)}，目前候選 {len(final)} 檔。")
+
+            time.sleep(VALUE_SLEEP)
+
+        except Exception as e:
+            print("value detail scan failed", sym, e)
 
     final = sorted(
         final,
         key=lambda x: (
-            x.get("current_status") == "可進場訊號",
-            x.get("highest_breakout_days", 0),
-            x.get("no_overhead_pressure", False),
-            safe_float(x.get("next_pressure_distance_pct", 0)) if x.get("next_pressure_distance_pct") != "-" else 999,
+            x.get("current_status") == "買進提醒",
+            x.get("level") == "S",
             x.get("score", 0),
+            x.get("upside_pct", 0),
         ),
         reverse=True,
     )
 
-    cand = update_breakout_candidate_pool(final)
+    cand = update_value_candidate_pool(final)
     cand_list = list(cand.get("candidates", {}).values())[:MAX_CANDIDATE_DISPLAY]
     alerts = cand.get("entry_alerts", [])
 
@@ -3392,16 +3571,15 @@ def scan_market():
     data = {
         "updated_at": taiwan_now(),
         **market,
-        **breakout_market,
-        "strategy_name": "突破前高策略驗證版",
-        "strategy_version": BREAKOUT_STRATEGY_VERSION,
-        "loose_watch_count": status_counts.get("突破訊號", 0) + status_counts.get("等回測", 0),
+        "strategy_name": "價值分析｜低估重估潛力股系統",
+        "strategy_version": VALUE_MODEL_VERSION,
+        "loose_watch_count": status_counts.get("只觀察", 0),
         "loose_observation_enabled": False,
-        "rough_scan_top_n": "全市場突破掃描",
+        "rough_scan_top_n": VALUE_SCAN_LIMIT,
         "lightweight_mode": True,
         "resource_saving_scan": True,
-        "rough_scan_total": rough_count,
-        "detailed_scan_total": len(final),
+        "rough_scan_total": len(rough),
+        "detailed_scan_total": len(targets),
         "stock_pool_count": total,
         "s_count": len([x for x in final if x.get("level") == "S"]),
         "a_count": len([x for x in final if x.get("level") == "A"]),
@@ -3409,7 +3587,7 @@ def scan_market():
         "candidate_count": len(cand_list),
         "candidate_pool": cand_list,
         "entry_alerts": alerts,
-        "breakout_status_counts": status_counts,
+        "value_status_counts": status_counts,
         "strategy_feedback": strategy_feedback(load_trade_log()),
     }
 
@@ -3417,8 +3595,8 @@ def scan_market():
 
     save_scan_status(
         "done",
-        f"突破前高掃描完成：全市場 {total} 檔，突破訊號 {len(final)} 檔，"
-        f"可進場訊號 {len(alerts)} 檔，開高/等回測 {status_counts.get('等回測',0)} 檔，跌破失敗 {status_counts.get('跌破失敗',0)} 檔。"
+        f"價值分析完成：全市場 {total} 檔，粗篩 {len(rough)} 檔，深入分析 {len(targets)} 檔，"
+        f"買進提醒 {len(alerts)} 檔，觀察 {status_counts.get('只觀察', 0)} 檔。"
     )
 
 
@@ -3521,7 +3699,7 @@ def track(symbol):
     actual=request.form.get("actual_price") if request.method=="POST" else None; shares=request.form.get("shares") if request.method=="POST" else None; note=request.form.get("note") if request.method=="POST" else ""
     price=safe_float(actual,0) or safe_float(item.get("next_entry_low")) or safe_float(item.get("price")); qty=safe_int(shares,0)
     eq=execution_quality(price,safe_float(item.get("next_entry_low")),safe_float(item.get("next_entry_high")),safe_float(item.get("no_entry_price")))
-    tracks.append({"symbol":symbol,"name":item.get("name",symbol),"level":item.get("level","-"),"sector":item.get("sector","-"),"buy_type":item.get("buy_type","-"),"price":price,"entry_price":price,"shares":qty,"realized_pnl":0,"trade_actions":[{"type":"初始追蹤","price":price,"shares":qty,"note":note or "加入追蹤","date":taiwan_now()}],"note":note or "","support_price":safe_float(item.get("support_price")),"no_entry_price":safe_float(item.get("no_entry_price")),"invalid_price":safe_float(item.get("invalid_price")),"practical_stop":safe_float(item.get("practical_stop")),"initial_stop":safe_float(item.get("practical_stop")),"risk_reward":safe_float(item.get("risk_reward")),"risk_reward_group":item.get("risk_reward_group",risk_reward_group(item.get("risk_reward",0))),"sector_status":item.get("sector_status","-"),"leader_status":item.get("leader_status","-"),"market_status":item.get("market_status","-"),"weekly_trend":item.get("weekly_trend","-"),"daily_signal":item.get("daily_signal","-"),"mtf_status":item.get("mtf_status","-"),"execution_quality":eq,"entry_deviation_pct":round2(pct(price,safe_float(item.get("next_entry_high")))) if item.get("next_entry_high") else 0,"suggest_entry_low":safe_float(item.get("next_entry_low")),"suggest_entry_high":safe_float(item.get("next_entry_high")),"feedback_score":item.get("feedback_score",0),"feedback_notes":item.get("feedback_notes",[]),"date":today_str(),"ai_holding_status":"剛加入追蹤","ai_exit_notice":"等待隔日開盤與支撐確認。","highest_since_entry":price,"lowest_since_entry":price,"max_favorable_pct":0,"max_drawdown_pct":0,"profit_giveback_pct":0,"trail_range":"-","trail_zone_name":"AI移動風控區","wave_target_1":0,"wave_target_2":0,"wave_target_3":0})
+    tracks.append({"symbol":symbol,"name":item.get("name",symbol),"level":item.get("level","-"),"sector":item.get("sector","-"),"buy_type":item.get("buy_type","-"),"price":price,"entry_price":price,"shares":qty,"realized_pnl":0,"trade_actions":[{"type":"初始追蹤","price":price,"shares":qty,"note":note or "加入追蹤","date":taiwan_now()}],"note":note or "","support_price":safe_float(item.get("support_price")),"no_entry_price":safe_float(item.get("no_entry_price")),"invalid_price":safe_float(item.get("invalid_price")),"practical_stop":safe_float(item.get("practical_stop")),"initial_stop":safe_float(item.get("practical_stop")),"risk_reward":safe_float(item.get("risk_reward")),"risk_reward_group":item.get("risk_reward_group",risk_reward_group(item.get("risk_reward",0))),"sector_status":item.get("sector_status","-"),"leader_status":item.get("leader_status","-"),"market_status":item.get("market_status","-"),"weekly_trend":item.get("weekly_trend","-"),"daily_signal":item.get("daily_signal","-"),"mtf_status":item.get("mtf_status","-"),"execution_quality":eq,"entry_deviation_pct":round2(pct(price,safe_float(item.get("next_entry_high")))) if item.get("next_entry_high") else 0,"suggest_entry_low":safe_float(item.get("next_entry_low")),"suggest_entry_high":safe_float(item.get("next_entry_high")),"feedback_score":item.get("feedback_score",0),"feedback_notes":item.get("feedback_notes",[]),"value_model_version":item.get("value_model_version","-"),"fair_value":item.get("fair_value",0),"upside_pct":item.get("upside_pct",0),"value_score":item.get("score",0),"buy_reason":"低估轉強，具備重估空間","date":today_str(),"ai_holding_status":"剛加入追蹤","ai_exit_notice":"等待隔日開盤與支撐確認。","highest_since_entry":price,"lowest_since_entry":price,"max_favorable_pct":0,"max_drawdown_pct":0,"profit_giveback_pct":0,"trail_range":"-","trail_zone_name":"AI移動風控區","wave_target_1":0,"wave_target_2":0,"wave_target_3":0})
     save_track(tracks); return redirect(url_for("index"))
 
 
