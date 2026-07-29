@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>價值分析｜低估重估潛力股系統</title>
+<title>價值分析｜大盤風控＋技術進場輔助版</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <script>setInterval(function(){ location.reload(); }, 300000);</script>
@@ -11,8 +11,8 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 </style>
 </head>
 <body><div class="container py-4">
-<h2>💰 價值分析｜低估重估潛力股系統</h2>
-<div class="muted mb-2">不使用技術分析做買賣核心；以財務安全、獲利品質、估值低估、重估催化劑與潛在翻倍空間為主。LINE只提醒買進、停利、賣出。</div>
+<h2>💰 價值分析｜大盤風控＋技術進場輔助版</h2>
+<div class="muted mb-2">價值分析為主，技術分析只輔助進場點；先判斷大盤，再找低估好公司，最後用均線、K棒、壓力與支撐避免買在爛位置。</div>
 
 <div class="top-card">
   <div class="d-flex flex-wrap justify-content-between gap-2">
@@ -47,15 +47,15 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
   </div>
   <hr>
   <div class="muted">
-    價值分析設定：深入基本面掃描 {{ rough_scan_top_n }} 檔｜LINE只推買進/停利/賣出｜
+    價值分析設定：深入基本面掃描 {{ rough_scan_top_n }} 檔｜大盤風控＋技術進場輔助｜LINE只推買進/停利/賣出｜
     心跳資料源：{{ heartbeat.market_data_source|default("-") }}｜
     報價時間：{{ heartbeat.market_quote_time|default("-") }}
   </div>
 </div>
 <div class="top-card">
 <div>🕒 網站時間：{{ now }}</div><div>📈 加權指數：{{ twii }} ｜ 櫃買指數：{{ otc }}</div>
-<div>🌍 大盤狀態：<span class="{% if allow_new_positions %}good{% else %}bad{% endif %}">{{ market_status }}</span> ｜ 大盤位階：{{ market_egg_zone }} ｜ 前方壓力：{{ market_pressure_note }} ｜ 操作模式：<span class="warning">{{ risk_mode }}</span> ｜ 風險開關：{% if allow_new_positions %}<span class="good">{{ risk_switch }}</span>{% else %}<span class="bad">{{ risk_switch }}</span>{% endif %} ｜ 部位倍率：{{ risk_multiplier }}</div>
-<div>📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 買進提醒：<span class="warning">{{ entry_alerts|length }}</span> 檔 ｜ 觀察：<span class="blue">{{ loose_watch_count|default(0) }}</span> 檔 ｜ 已追蹤：<span class="warning">{{ tracks|length }}</span> 檔 ｜ 價值候選：{{ candidate_count }} 檔 ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}</div>
+<div>🌍 大盤狀態：<span class="{% if value_allow_buy|default(False) %}good{% else %}bad{% endif %}">{{ value_market_status|default(market_status) }}</span> ｜ 買進政策：<span class="warning">{{ value_market_policy|default(risk_mode) }}</span> ｜ 大盤分數：{{ value_market_score|default("-") }} ｜ {{ value_market_note|default(risk_note) }}</div>
+<div>📌 掃描時間：{{ scan_updated_at }} ｜ 股票池：{{ stock_pool_count }} 檔 ｜ 買進提醒：<span class="warning">{{ entry_alerts|length }}</span> 檔 ｜ 觀察/等待：<span class="blue">{{ loose_watch_count|default(0) }}</span> 檔 ｜ 已追蹤：<span class="warning">{{ tracks|length }}</span> 檔 ｜ 價值候選：{{ candidate_count }} 檔 ｜ S級：{{ s_count }} ｜ A級：{{ a_count }}</div>
 </div>
 <div class="mb-3"><a href="/scan-now" class="btn btn-success me-2">送出背景掃描</a><a href="/reset-scan-status" class="btn btn-danger me-2" onclick="return confirm('確定要重置掃描狀態嗎？')">重置掃描狀態</a><button onclick="location.reload()" class="btn btn-main me-2">重新整理</button><a href="/heartbeat" class="btn btn-outline-primary me-2" target="_blank">手動心跳檢查</a><a href="/system-health" class="btn btn-outline-light me-2" target="_blank">系統健康狀態</a><a href="/schedule-health" class="btn btn-outline-light me-2" target="_blank">排程健康檢查</a><a href="/signal-summary" class="btn btn-outline-success me-2" target="_blank">價值模型統計</a><a href="/quote-index" class="btn btn-outline-info me-2" target="_blank">即時大盤資料源</a><a href="/line-test" class="btn btn-yellow me-2">測試LINE通知</a><a href="/line-open-watch" class="btn btn-outline-info me-2">09:10 AI持股監控</a><a href="/line-preclose" class="btn btn-outline-warning me-2">13:20 AI交易助理進場指令</a><a href="/generate-ai-report" class="btn btn-outline-light">產生OpenAI分析報告</a></div>
 <div class="panel"><h5>LINE通知狀態</h5><div>Token：{% if line_token_ready %}<span class="good">已設定</span>{% else %}<span class="bad">未設定</span>{% endif %} ｜ User ID：{% if line_user_ready %}<span class="good">已綁定</span>{% else %}<span class="warning">尚未綁定，請到 LINE Developers 設定 Webhook，並傳訊息給官方帳號</span>{% endif %}</div><div class="muted">Webhook URL：你的 Railway 網址 + /callback。已啟用：價值分析低估重估模型、LINE簡化通知。自動推播：週一～五 09:10 持股停利/賣出監控、13:20 價值買進提醒；全市場價值掃描為週一～五 16:05。</div></div>
@@ -101,6 +101,8 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <div class="muted mb-2">買進提醒只顯示真正符合低估、財務安全、重估催化劑與潛在空間的股票；其他資料留後台回測。</div>
 {% if candidate_pool %}
 {% set buy_rows = candidate_pool|selectattr("current_status","equalto","買進提醒")|list %}
+{% set wait_entry_rows = candidate_pool|selectattr("current_status","equalto","等待進場點")|list %}
+{% set wait_market_rows = candidate_pool|selectattr("current_status","equalto","等待大盤轉強")|list %}
 {% set watch_rows = candidate_pool|selectattr("current_status","equalto","只觀察")|list %}
 <div class="row">
 <div class="col-lg-6 mb-3">
@@ -118,14 +120,14 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 </div>
 <div class="col-lg-6 mb-3">
   <div class="panel">
-    <h5>👀 A/B級觀察</h5>
-    {% for c in watch_rows[:8] %}
+    <h5>⏳ 等待進場 / 等待大盤</h5>
+    {% for c in (wait_entry_rows + wait_market_rows)[:8] %}
       <div class="mb-2">
         <span class="blue">{{ c.name }}</span> {{ c.symbol }}｜{{ c.level }}｜總分 {{ c.score }}<br>
-        <span class="muted">觀察原因：條件尚未完整，暫不提醒買進。</span>
+        <span class="muted">{{ c.current_status }}｜技術：{{ c.technical_entry_status }}｜大盤：{{ c.value_market_status }}</span>
       </div>
     {% else %}
-      <div class="muted">目前沒有觀察股。</div>
+      <div class="muted">目前沒有等待進場或等待大盤轉強的股票。</div>
     {% endfor %}
   </div>
 </div>
@@ -137,7 +139,7 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <table class="table table-dark table-bordered align-middle">
 <thead>
 <tr>
-<th>股票</th><th>狀態</th><th>等級</th><th>總分</th><th>財務安全</th><th>獲利品質</th><th>低估</th><th>催化劑</th><th>產業</th><th>護城河</th><th>風險扣分</th><th>EPS</th><th>本益比</th><th>合理價</th><th>潛在空間</th><th>重點紀錄</th><th>操作</th>
+<th>股票</th><th>狀態</th><th>等級</th><th>總分</th><th>財務安全</th><th>獲利品質</th><th>低估</th><th>催化劑</th><th>產業</th><th>護城河</th><th>風險扣分</th><th>技術進場</th><th>前方壓力</th><th>支撐</th><th>EPS</th><th>本益比</th><th>合理價</th><th>潛在空間</th><th>重點紀錄</th><th>操作</th>
 </tr>
 </thead>
 <tbody>
@@ -154,6 +156,9 @@ body{background:#07111f;color:#e5e7eb;font-size:15px}.container{max-width:1500px
 <td>{{ c.industry_score }}</td>
 <td>{{ c.moat_score }}</td>
 <td class="bad">{{ c.risk_deduct }}</td>
+<td>{{ c.technical_entry_score }}<br><span class="muted">{{ c.technical_entry_status }}</span></td>
+<td>{{ c.near_pressure_price }}<br><span class="muted">{{ c.near_pressure_distance_pct }}%</span></td>
+<td>{{ c.support_reference }}</td>
 <td>{{ c.eps }}</td>
 <td>{{ c.pe }}</td>
 <td>{{ c.fair_value }}</td>
