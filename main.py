@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-APP_VERSION_NAME = "價值分析_大盤風控_技術進場輔助版_2026-07-29"
+APP_VERSION_NAME = "價值優先_大盤控部位_技術控節奏版_2026-09-01"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
@@ -61,11 +61,13 @@ VALUE_SLEEP = float(os.getenv("VALUE_SLEEP", "0.25"))
 
 # LINE只顯示結論，詳細數據留後台
 VALUE_LINE_DETAIL_ENABLED = os.getenv("VALUE_LINE_DETAIL_ENABLED", "0") == "1"
-VALUE_REQUIRE_TECH_ENTRY = os.getenv("VALUE_REQUIRE_TECH_ENTRY", "1") == "1"
-VALUE_MIN_TECH_SCORE = float(os.getenv("VALUE_MIN_TECH_SCORE", "55"))
-VALUE_CAUTION_TECH_SCORE = float(os.getenv("VALUE_CAUTION_TECH_SCORE", "65"))
-VALUE_CAUTION_MIN_SCORE = float(os.getenv("VALUE_CAUTION_MIN_SCORE", "90"))
-VALUE_CAUTION_MIN_UPSIDE = float(os.getenv("VALUE_CAUTION_MIN_UPSIDE", "150"))
+VALUE_REQUIRE_TECH_ENTRY = os.getenv("VALUE_REQUIRE_TECH_ENTRY", "0") == "1"       # 0=技術面不擋買進，只控節奏
+VALUE_MIN_TECH_SCORE = float(os.getenv("VALUE_MIN_TECH_SCORE", "35"))              # 技術面太差才等待進場
+VALUE_CAUTION_TECH_SCORE = float(os.getenv("VALUE_CAUTION_TECH_SCORE", "55"))
+VALUE_CAUTION_MIN_SCORE = float(os.getenv("VALUE_CAUTION_MIN_SCORE", "88"))
+VALUE_CAUTION_MIN_UPSIDE = float(os.getenv("VALUE_CAUTION_MIN_UPSIDE", "120"))
+VALUE_EXTREME_SCORE = float(os.getenv("VALUE_EXTREME_SCORE", "92"))                # 轉弱盤只允許極高分價值股提醒
+VALUE_EXTREME_UPSIDE = float(os.getenv("VALUE_EXTREME_UPSIDE", "180"))
 
 # =====================================================
 # AI交易助理正式驗證版設定
@@ -1935,7 +1937,7 @@ def format_line_entry_alerts():
         rows.append(
             f"\n股票：{a.get('name','-')} {short_symbol(a.get('symbol',''))}\n"
             f"判斷：低估轉強，具備重估空間\n"
-            f"建議：可分批買進"
+            f"建議：{a.get('line_advice', a.get('execution_action', '可分批買進'))}"
         )
         if VALUE_LINE_DETAIL_ENABLED:
             rows.append(
@@ -3368,6 +3370,82 @@ def technical_entry_auxiliary(df, price=0):
         return out
 
 
+def value_position_plan(item, value_mkt=None):
+    """
+    價值優先版：
+    價值面決定是否值得買；大盤與技術面只決定部位大小與節奏。
+    """
+    value_mkt = value_mkt or {}
+    market_status = value_mkt.get("value_market_status", item.get("value_market_status", "-"))
+    tech_score = safe_float(item.get("technical_entry_score", 0))
+    score = safe_float(item.get("score", 0))
+    upside = safe_float(item.get("upside_pct", 0))
+    risk_deduct = safe_float(item.get("risk_deduct", 0))
+    tech_status = item.get("technical_entry_status", "-")
+
+    # 技術很差時，不是不看好公司，而是不要馬上買在爛位置。
+    if tech_score < VALUE_MIN_TECH_SCORE and not (score >= VALUE_EXTREME_SCORE and upside >= VALUE_EXTREME_UPSIDE):
+        return {
+            "can_alert": False,
+            "status": "等待進場點",
+            "position_plan": "價值條件成立，但技術位置太差，等更好價格。",
+            "line_advice": "暫不買，等待更好進場點",
+        }
+
+    if market_status == "強多":
+        if tech_score >= VALUE_CAUTION_TECH_SCORE:
+            plan = "可分批買進，第一段約20%～30%。"
+            advice = "可分批買進"
+        else:
+            plan = "價值條件成立，但技術位置普通，第一段約10%～20%。"
+            advice = "可小部位分批買進"
+        return {"can_alert": True, "status": "買進提醒", "position_plan": plan, "line_advice": advice}
+
+    if market_status == "多頭回檔":
+        if score >= VALUE_CAUTION_MIN_SCORE and upside >= VALUE_CAUTION_MIN_UPSIDE:
+            plan = "大盤回檔，僅建議保守分批，第一段約10%～20%。"
+            advice = "可保守小部位分批"
+            return {"can_alert": True, "status": "買進提醒", "position_plan": plan, "line_advice": advice}
+        return {
+            "can_alert": False,
+            "status": "等待大盤轉強",
+            "position_plan": "大盤回檔，條件還不夠強，先觀察。",
+            "line_advice": "先觀察",
+        }
+
+    if market_status == "盤整震盪":
+        if score >= VALUE_EXTREME_SCORE and upside >= VALUE_EXTREME_UPSIDE and risk_deduct <= 10:
+            plan = "盤整震盪，只允許極小部位試單，第一段約5%～10%。"
+            advice = "只適合極小部位試單"
+            return {"can_alert": True, "status": "買進提醒", "position_plan": plan, "line_advice": advice}
+        return {
+            "can_alert": False,
+            "status": "等待大盤轉強",
+            "position_plan": "大盤震盪，不主動買進，保留觀察。",
+            "line_advice": "先觀察",
+        }
+
+    if market_status == "轉弱":
+        if score >= VALUE_EXTREME_SCORE and upside >= VALUE_EXTREME_UPSIDE and risk_deduct <= 8 and tech_score >= VALUE_CAUTION_TECH_SCORE:
+            plan = "大盤轉弱，但公司極度低估且技術位置尚可，只能極小部位觀察，第一段約5%。"
+            advice = "極小部位觀察，不可重押"
+            return {"can_alert": True, "status": "買進提醒", "position_plan": plan, "line_advice": advice}
+        return {
+            "can_alert": False,
+            "status": "等待大盤轉強",
+            "position_plan": "大盤轉弱，停止一般買進提醒。",
+            "line_advice": "先觀察",
+        }
+
+    return {
+        "can_alert": False,
+        "status": "等待大盤轉強",
+        "position_plan": "空頭或資料不足，不提醒買進。",
+        "line_advice": "不買",
+    }
+
+
+
 def analyze_value_stock(symbol, name="-", industry="-", df=None):
     """
     價值分析模型：
@@ -3468,11 +3546,8 @@ def analyze_value_stock(symbol, name="-", industry="-", df=None):
     if hard_exclude:
         action = "排除"
         level = "D"
-    elif value_buy_candidate and tech.get("technical_entry_pass", False):
-        action = "買進提醒"
-        level = "S"
     elif value_buy_candidate:
-        action = "等待進場點"
+        action = "價值買進候選"
         level = "S"
     elif total >= VALUE_SCORE_WATCH:
         action = "只觀察"
@@ -3633,6 +3708,10 @@ def record_value_signal(signal_type, item, note=""):
             "technical_entry_status": item.get("technical_entry_status", "-"),
             "near_pressure_distance_pct": item.get("near_pressure_distance_pct", "-"),
             "support_reference": item.get("support_reference", "-"),
+            "position_plan": item.get("position_plan", "-"),
+            "line_advice": item.get("line_advice", "-"),
+            "value_market_status": item.get("value_market_status", "-"),
+            "value_market_policy": item.get("value_market_policy", "-"),
         },
     )
 
@@ -3740,23 +3819,20 @@ def scan_market():
             item["value_market_policy"] = value_mkt.get("value_market_policy", "-")
             item["value_market_note"] = value_mkt.get("value_market_note", "-")
 
-            if item.get("current_status") == "買進提醒":
-                if not value_mkt.get("value_allow_buy", False):
-                    item["current_status"] = "等待大盤轉強"
-                    item["execution_action"] = "大盤非買進環境，只觀察不推買進"
-                elif value_mkt.get("value_market_policy") == "保守買進":
-                    if not (
-                        item.get("score", 0) >= VALUE_CAUTION_MIN_SCORE
-                        and item.get("upside_pct", 0) >= VALUE_CAUTION_MIN_UPSIDE
-                        and item.get("technical_entry_score", 0) >= VALUE_CAUTION_TECH_SCORE
-                    ):
-                        item["current_status"] = "等待大盤轉強"
-                        item["execution_action"] = "多頭回檔環境，條件未達保守買進門檻"
+            if item.get("current_status") == "價值買進候選":
+                plan = value_position_plan(item, value_mkt)
+                item["current_status"] = plan.get("status", "只觀察")
+                item["execution_action"] = plan.get("line_advice", "-")
+                item["position_plan"] = plan.get("position_plan", "-")
+                item["line_advice"] = plan.get("line_advice", "-")
+            else:
+                item["position_plan"] = "未達買進提醒門檻，保留觀察。"
+                item["line_advice"] = "先觀察"
 
             if item.get("current_status") in ["買進提醒", "等待進場點", "等待大盤轉強", "只觀察"]:
                 final.append(item)
                 if item.get("current_status") == "買進提醒":
-                    record_value_signal("買進提醒", item, "低估轉強，具備重估空間，且大盤與進場點允許。")
+                    record_value_signal("買進提醒", item, "價值條件成立；大盤與技術只控制部位大小。")
 
             if i % 25 == 0:
                 save_scan_status("running", f"基本面分析中：{i}/{len(targets)}，目前候選 {len(final)} 檔。")
@@ -3790,7 +3866,11 @@ def scan_market():
         "updated_at": taiwan_now(),
         **market,
         **value_mkt,
-        "strategy_name": "價值分析｜低估重估潛力股系統",
+        "risk_note": value_mkt.get("value_market_note", "-"),
+        "risk_mode": value_mkt.get("value_market_policy", "-"),
+        "risk_switch": value_mkt.get("value_market_policy", "-"),
+        "allow_new_positions": value_mkt.get("value_allow_buy", False),
+        "strategy_name": "價值優先｜大盤控部位｜技術控節奏系統",
         "strategy_version": VALUE_MODEL_VERSION,
         "loose_watch_count": status_counts.get("只觀察", 0),
         "loose_observation_enabled": False,
@@ -3815,7 +3895,7 @@ def scan_market():
     save_scan_status(
         "done",
         f"價值分析完成：全市場 {total} 檔，粗篩 {len(rough)} 檔，深入分析 {len(targets)} 檔，"
-        f"買進提醒 {len(alerts)} 檔，等待進場 {status_counts.get('等待進場點', 0)} 檔，等待大盤 {status_counts.get('等待大盤轉強', 0)} 檔，觀察 {status_counts.get('只觀察', 0)} 檔."
+        f"買進提醒 {len(alerts)} 檔，等待進場 {status_counts.get('等待進場點', 0)} 檔，等待大盤 {status_counts.get('等待大盤轉強', 0)} 檔，觀察 {status_counts.get('只觀察', 0)} 檔。"
     )
 
 
